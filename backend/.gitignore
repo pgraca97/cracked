@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.pnpm-debug.log*
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+coverage/
+*.cover
+
+# Temporary files
+*.tmp
+temp/
+tmp/
