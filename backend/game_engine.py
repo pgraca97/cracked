@@ -53,15 +53,14 @@ class GameEngine:
     def state(self) -> GameState:
         return self._state
 
-    async def process_turn(self, player_text: str, time_elapsed: float) -> tuple[DiegoResponse, str]:
-        """Returns (diego_response, enhanced_player_text)."""
+    async def get_diego_response(self, player_text: str, time_elapsed: float) -> DiegoResponse:
+        """Get Diego's response. Call this first, emit text to player, then call apply_judge."""
         self._state.turn_number += 1
         self._state.time_elapsed_seconds = time_elapsed
+        return await ai_client.chat(self._state, player_text)
 
-        # 1. Get Diego's response
-        response = await ai_client.chat(self._state, player_text)
-
-        # 2. Judge evaluates the turn (facts, contradictions, relationship)
+    async def run_judge_and_update(self, player_text: str, response: DiegoResponse) -> str:
+        """Run judge evaluation and update game state. Returns enhanced player text."""
         judge = await ai_client.judge_turn(
             self._state.facts_log,
             self._state.conversation_history,
@@ -69,11 +68,8 @@ class GameEngine:
             response,
         )
 
-        # 3. Update game state from both Diego and the judge
         self._update_state(response, judge)
 
-        # 4. Append to conversation history after state update
-        # Use enhanced text (with restored punctuation) so Diego sees intended intensity on future turns
         enhanced = judge.player_text_enhanced or player_text
         self._state.conversation_history.append(
             ChatMessage(role="user", content=enhanced)
@@ -82,7 +78,7 @@ class GameEngine:
             ChatMessage(role="assistant", content=response.dialogue)
         )
 
-        return response, enhanced
+        return enhanced
 
     def _update_state(self, response: DiegoResponse, judge: JudgeResponse):
         # Facts: use the judge's extraction, skip near-duplicates

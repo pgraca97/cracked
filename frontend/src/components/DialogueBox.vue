@@ -9,6 +9,7 @@ export default defineComponent({
     text: { type: String, required: true },
     instant: { type: Boolean, default: false },
     speed: { type: Number, default: 25 },
+    muteTick: { type: Boolean, default: false },
     portrait: { type: String, default: "" },
   },
 
@@ -50,7 +51,7 @@ export default defineComponent({
       let i = 0;
       let charCount = 0;
       // Don't tick for the "..." loading placeholder - only real dialogue
-      const shouldTick = text.length > 3;
+      const shouldTick = text.length > 3 && !this.muteTick;
       const tick = () => {
         if (i < text.length) {
           this.displayedText += text[i];

@@ -55,17 +55,18 @@ Open `http://localhost:5173`.
 
 ## TTS (ElevenLabs)
 
-Disabled by default. To enable, set `TTS_ENABLED=true` and fill in `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in `backend/.env`. Voice settings per emotion state are in `docs/game-design.md`.
+Disabled by default. To enable, set `TTS_ENABLED=true` and fill in `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in `backend/.env`. Uses ElevenLabs Flash v2.5 for low-latency conversational speech. Voice settings per emotion state are in `docs/game-design.md`.
 
 ## How it works
 
 1. VAD detects end of speech and sends the audio buffer to the backend over Socket.IO.
 2. Voxtral transcribes it. A cleanup pass fixes common STT artifacts.
-3. The transcript goes to `magistral-medium` (Diego) and `mistral-medium` (judge) in sequence.
-4. Diego's dialogue is sent to the frontend immediately. If TTS is enabled, audio follows.
-5. The judge's evaluation updates the game state: facts log, contradiction count, relationship pressure, emotion level.
-6. Emotion escalates from `calm` → `nervous` → `defensive` → `breaking` as contradictions accumulate.
-7. Confession triggers at 3+ contradictions, or at 2+ if the player has also pressed Diego on his relationship with his colleague André.
+3. The transcript goes to `mistral-small` (Diego). His dialogue is sent to the frontend immediately.
+4. The judge (`mistral-medium`) and TTS (ElevenLabs Flash) run in parallel - neither blocks the player from seeing Diego's response.
+5. When TTS is enabled, the typewriter speed is synced to the audio duration so text and voice finish together.
+6. The judge's evaluation updates the game state live: facts log, contradiction count, relationship pressure, emotion level.
+7. Emotion escalates from `calm` → `nervous` → `defensive` → `breaking` as contradictions accumulate.
+8. Confession triggers at 3+ contradictions, or at 2+ if the player has also pressed Diego on his relationship with his colleague André.
 
 The full case story, contradiction traps, system prompt, and scoring rules are in `docs/game-design.md`.
 

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 
@@ -96,26 +97,32 @@ async def player_audio(sid, data):
         await sio.emit("status", "listening", room=sid)
         return
 
-    # 2. Clean transcription (deterministic fixes + LLM for phonetic confusions)
-    try:
-        player_text = await ai_client.clean_transcription(
-            raw_text, engine.state.conversation_history[-6:]
-        )
-    except Exception:
-        player_text = raw_text  # Fallback to raw on failure
-
-    await sio.emit("player_text", player_text, room=sid)
-
-    # 3. Get Diego's response + judge evaluation
+    # 2. Show raw text immediately, clean in parallel with Diego
+    await sio.emit("player_text", raw_text, room=sid)
     await sio.emit("status", "thinking", room=sid)
+
+    # Run cleanup + Diego in parallel - Diego doesn't need the cleaned text
+    cleanup_task = asyncio.create_task(
+        ai_client.clean_transcription(raw_text, engine.state.conversation_history[-6:])
+    )
+
     try:
-        response, enhanced_text = await engine.process_turn(player_text, elapsed)
+        response = await engine.get_diego_response(raw_text, elapsed)
     except Exception as exc:
+        cleanup_task.cancel()
         await sio.emit("error", f"AI response failed: {exc}", room=sid)
         await sio.emit("status", "listening", room=sid)
         return
 
-    # 4. Send text + tell frontend whether to wait for audio
+    # If cleanup finished, update the player text shown in the UI
+    try:
+        player_text = await asyncio.wait_for(asyncio.shield(cleanup_task), timeout=0.1)
+    except (asyncio.TimeoutError, Exception):
+        player_text = raw_text
+    if player_text != raw_text:
+        await sio.emit("player_text", player_text, room=sid)
+
+    # 3. Emit text IMMEDIATELY - don't wait for judge or TTS
     await sio.emit("diego_response", {
         "dialogue": response.dialogue,
         "emotion": response.emotion.value,
@@ -126,13 +133,29 @@ async def player_audio(sid, data):
         "tts_enabled": tts_client.TTS_ENABLED,
     }, room=sid)
 
-    # 5. TTS - synthesize Diego's voice (skipped if TTS_ENABLED=false)
-    try:
-        audio = await tts_client.synthesize(response.dialogue, response.emotion)
-        if audio:
-            await sio.emit("diego_audio", audio, room=sid)
-    except Exception:
-        pass  # TTS failure is non-fatal
+    # 4. Run judge + TTS in parallel - both depend on Diego's response, not each other
+    async def _synthesize_and_emit():
+        try:
+            audio = await tts_client.synthesize(response.dialogue, response.emotion)
+            if audio:
+                await sio.emit("diego_audio", audio, room=sid)
+        except Exception:
+            pass  # TTS failure is non-fatal
+
+    async def _run_judge():
+        try:
+            await engine.run_judge_and_update(player_text, response)
+            # Emit updated state as soon as judge finishes (don't wait for TTS)
+            await sio.emit("state_update", {
+                "emotion": response.emotion.value,
+                "contradictions": list(engine.state.contradictions_caught.values()),
+                "facts": engine.state.facts_log,
+                "confession": engine.state.confession_triggered,
+            }, room=sid)
+        except Exception:
+            pass  # Judge failure is non-fatal, state just won't update
+
+    await asyncio.gather(_synthesize_and_emit(), _run_judge())
 
     if not engine.state.confession_triggered:
         await sio.emit("status", "listening", room=sid)

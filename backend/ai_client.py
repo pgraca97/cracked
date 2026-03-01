@@ -9,9 +9,9 @@ from mistralai import Mistral
 from models import GameState, DiegoResponse, JudgeResponse, ChatMessage
 from prompts import DIEGO_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT, CLEANUP_PROMPT_TEMPLATE
 
-API_TIMEOUT = 45  # seconds (magistral needs more time for reasoning)
+API_TIMEOUT = 15  # seconds
 
-DIEGO_MODEL = os.environ.get("DIEGO_MODEL", "magistral-medium-latest")
+DIEGO_MODEL = os.environ.get("DIEGO_MODEL", "mistral-small-latest")
 # Judge: medium for better contradiction detection and fact extraction accuracy
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "mistral-medium-latest")
 # Cleanup: small is fast enough for phonetic word fixes - runs every turn before player sees text
@@ -219,51 +219,27 @@ async def chat(game_state: GameState, player_text: str) -> DiegoResponse:
     for msg in recent:
         messages.append({"role": msg.role, "content": msg.content})
 
-    # New player question - for magistral, add a JSON reminder since it tends to respond in plain text
-    is_magistral = DIEGO_MODEL.startswith("magistral")
-    if is_magistral:
-        messages.append({"role": "user", "content": f"{player_text}\n\n[Respond ONLY with a valid JSON object. No plain text outside the JSON.]"})
-    else:
-        messages.append({"role": "user", "content": player_text})
+    messages.append({"role": "user", "content": player_text})
 
-    # Magistral is flakier with JSON - give it more attempts
-    max_attempts = 3 if is_magistral else 2
     last_error: Exception | None = None
 
-    for attempt in range(max_attempts):
-        kwargs = {
-            "model": DIEGO_MODEL,
-            "messages": messages,
-            "temperature": 0.7,
-        }
-        # json_object mode works with mistral models; magistral uses free-form output
-        if not is_magistral:
-            kwargs["response_format"] = {"type": "json_object"}
-        else:
-            # Opt out of magistral's default system prompt (encourages Markdown/LaTeX)
-            # - our own system prompt already has all the instructions Diego needs
-            kwargs["prompt_mode"] = None
-
+    for attempt in range(2):
         response = await asyncio.wait_for(
-            client.chat.complete_async(**kwargs),
+            client.chat.complete_async(
+                model=DIEGO_MODEL,
+                messages=messages,
+                temperature=0.7,
+                response_format={"type": "json_object"},
+            ),
             timeout=API_TIMEOUT,
         )
 
         raw_content = response.choices[0].message.content
 
         try:
-            if is_magistral:
-                internal_thought, raw_json = _parse_magistral_response(raw_content)
-                if not raw_json or not raw_json.strip():
-                    raise ValueError("Empty text chunk from magistral")
-                data = json.loads(raw_json)
-                # Magistral's thinking becomes the internal_thought
-                if internal_thought and not data.get("internal_thought"):
-                    data["internal_thought"] = internal_thought
-            else:
-                if not raw_content or not raw_content.strip():
-                    raise ValueError("Empty response from model")
-                data = json.loads(raw_content)
+            if not raw_content or not raw_content.strip():
+                raise ValueError("Empty response from model")
+            data = json.loads(raw_content)
 
             # Model sometimes returns a JSON array instead of an object
             if isinstance(data, list):
@@ -275,7 +251,7 @@ async def chat(game_state: GameState, player_text: str) -> DiegoResponse:
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             last_error = exc
 
-    raise ValueError(f"Mistral returned invalid JSON after {max_attempts} attempts: {last_error}")
+    raise ValueError(f"Mistral returned invalid JSON after 2 attempts: {last_error}")
 
 
 async def judge_turn(

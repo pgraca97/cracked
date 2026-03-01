@@ -42,6 +42,7 @@ export default defineComponent({
       audioFallbackTimer: null as ReturnType<typeof setTimeout> | null,
       confessionTimer: null as ReturnType<typeof setTimeout> | null,
       typewriterSpeed: 25,
+      ttsPlaying: false,
     };
   },
 
@@ -135,23 +136,40 @@ export default defineComponent({
           this.currentAudio = null;
         }
 
-        if (!data.tts_enabled || this.audioMuted) {
-          // TTS is off or muted - show text immediately, no waiting
-          this.typewriterSpeed = 25;
-          this.diegoDialogue = data.dialogue;
-        } else {
-          // Clear old dialogue while we wait for audio - shows "..." as a loading state
+        if (data.tts_enabled && !this.audioMuted) {
+          // Subtitle-sync mode: hold text until audio arrives, then play both together
+          this.ttsPlaying = true;
           this.diegoDialogue = "...";
-          // Hold the dialogue text - wait for audio to arrive so we can sync them
           this.pendingDialogue = data;
           this.audioFallbackTimer = setTimeout(() => {
-            // Audio didn't arrive in time (TTS failed) - show text anyway
+            // Audio didn't arrive in time - show text anyway
             if (this.pendingDialogue) {
               this.typewriterSpeed = 25;
               this.diegoDialogue = this.pendingDialogue.dialogue;
               this.pendingDialogue = null;
             }
-          }, 8000);
+          }, 5000);
+        } else {
+          // No TTS - show text immediately with typewriter tick
+          this.ttsPlaying = false;
+          this.typewriterSpeed = 25;
+          this.diegoDialogue = data.dialogue;
+        }
+      });
+
+      socket.on("state_update", (data: { emotion: string; contradictions: string[]; facts: string[]; confession: boolean }) => {
+        if (data.contradictions.length > this.contradictions.length) {
+          playOneShot("pianoHit");
+        }
+        this.diegoEmotion = data.emotion;
+        this.contradictions = data.contradictions;
+        this.facts = data.facts;
+        if (data.confession && !this.confession) {
+          this.confession = true;
+          pauseVAD();
+          this.confessionTimer = setTimeout(() => {
+            this.endInterrogation();
+          }, 6000);
         }
       });
 
@@ -165,46 +183,44 @@ export default defineComponent({
         const blob = new Blob([data], { type: "audio/mpeg" });
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
+        audio.volume = 0.45;
         this.currentAudio = audio;
 
         audio.onended = () => {
           URL.revokeObjectURL(url);
           this.currentAudio = null;
+          this.ttsPlaying = false;
         };
 
-        // Wait for audio metadata to load so we know the duration
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          this.currentAudio = null;
+          this.ttsPlaying = false;
+          if (this.pendingDialogue) {
+            this.typewriterSpeed = 25;
+            this.diegoDialogue = this.pendingDialogue.dialogue;
+            this.pendingDialogue = null;
+          }
+        };
+
+        // Sync typewriter speed to audio duration, then start both together
         audio.onloadedmetadata = () => {
-          // Match typewriter speed to audio duration
           if (this.pendingDialogue && audio.duration > 0) {
             const charCount = this.pendingDialogue.dialogue.length;
-            // Leave a small buffer so typewriter finishes just before audio ends
             this.typewriterSpeed = Math.max(10, Math.floor((audio.duration * 950) / charCount));
           }
 
-          // Start both at the same time
           if (this.pendingDialogue) {
             this.diegoDialogue = this.pendingDialogue.dialogue;
             this.pendingDialogue = null;
           }
 
           if (!this.audioMuted) {
-            audio.play().catch((err) => {
-              console.error("Audio playback failed:", err);
+            audio.play().catch(() => {
               URL.revokeObjectURL(url);
               this.currentAudio = null;
+              this.ttsPlaying = false;
             });
-          }
-        };
-
-        // If metadata fails to load, show text anyway
-        audio.onerror = () => {
-          console.error("Audio load failed");
-          URL.revokeObjectURL(url);
-          this.currentAudio = null;
-          if (this.pendingDialogue) {
-            this.typewriterSpeed = 25;
-            this.diegoDialogue = this.pendingDialogue.dialogue;
-            this.pendingDialogue = null;
           }
         };
       });
@@ -295,6 +311,7 @@ export default defineComponent({
       socket.off("status");
       socket.off("player_text");
       socket.off("diego_response");
+      socket.off("state_update");
       socket.off("diego_audio");
       socket.off("error");
       // Don't disconnect - VerdictScreen needs the same session & game state
@@ -307,6 +324,7 @@ export default defineComponent({
       if (this.audioMuted && this.currentAudio) {
         this.currentAudio.pause();
         this.currentAudio = null;
+        this.ttsPlaying = false;
       }
     },
   },
@@ -338,6 +356,7 @@ export default defineComponent({
               speaker="DIEGO FONSECA"
               :text="diegoDialogue"
               :speed="typewriterSpeed"
+              :mute-tick="ttsPlaying"
               portrait="/diego.png"
             />
           </div>
