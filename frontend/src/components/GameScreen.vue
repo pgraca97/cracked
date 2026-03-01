@@ -2,6 +2,7 @@
 import { defineComponent } from "vue";
 import { getSocket } from "../composables/useSocket";
 import { startVAD, pauseVAD, resumeVAD, destroyVAD, float32ToWav } from "../composables/useVAD";
+import { playOneShot, startLoop, stopAllLoops, setMuted } from "../composables/useSounds";
 import DialogueBox from "./DialogueBox.vue";
 import EvidencePanel from "./EvidencePanel.vue";
 import MicButton from "./MicButton.vue";
@@ -19,7 +20,7 @@ interface DiegoResponse {
 export default defineComponent({
   name: "GameScreen",
   components: { DialogueBox, EvidencePanel, MicButton },
-  emits: ["verdict", "result"],
+  emits: ["verdict", "quit"],
 
   data() {
     return {
@@ -39,6 +40,7 @@ export default defineComponent({
       currentAudio: null as HTMLAudioElement | null,
       pendingDialogue: null as DiegoResponse | null,
       audioFallbackTimer: null as ReturnType<typeof setTimeout> | null,
+      confessionTimer: null as ReturnType<typeof setTimeout> | null,
       typewriterSpeed: 25,
     };
   },
@@ -47,10 +49,19 @@ export default defineComponent({
     this.setupSocket();
     this.startTimer();
     this.initVAD();
+    startLoop("ambientHum");
   },
 
   beforeUnmount() {
     this.cleanup();
+  },
+
+  watch: {
+    secondsLeft(val: number) {
+      if (val === 60) {
+        startLoop("tickingLoop");
+      }
+    },
   },
 
   computed: {
@@ -81,15 +92,15 @@ export default defineComponent({
           if (!this.confession) resumeVAD();
         } else {
           pauseVAD();
-          // Safety net: if stuck in transcribing/thinking for 35s, recover
+          // Safety net: if stuck in transcribing/thinking for 60s, recover
           this.statusTimeout = setTimeout(() => {
             if (this.status !== "listening") {
               this.status = "listening";
-              this.error = "Response timed out — try again.";
+              this.error = "Response timed out - try again.";
               setTimeout(() => { this.error = ""; }, 4000);
               if (!this.confession) resumeVAD();
             }
-          }, 35000);
+          }, 60000);
         }
       });
 
@@ -98,6 +109,11 @@ export default defineComponent({
       });
 
       socket.on("diego_response", (data: DiegoResponse) => {
+        // Fire piano hit immediately - before state update to beat Vue's render cycle
+        if (data.contradictions.length > this.contradictions.length) {
+          playOneShot("pianoHit");
+        }
+
         // Update game state immediately (evidence panel, emotion label, etc.)
         this.diegoEmotion = data.emotion;
         this.contradictions = data.contradictions;
@@ -107,6 +123,10 @@ export default defineComponent({
 
         if (data.confession) {
           pauseVAD();
+          // Auto-advance to verdict after a delay so the player can read the confession
+          this.confessionTimer = setTimeout(() => {
+            this.endInterrogation();
+          }, 6000);
         }
 
         // Stop any audio from the previous turn
@@ -116,16 +136,16 @@ export default defineComponent({
         }
 
         if (!data.tts_enabled || this.audioMuted) {
-          // TTS is off or muted — show text immediately, no waiting
+          // TTS is off or muted - show text immediately, no waiting
           this.typewriterSpeed = 25;
           this.diegoDialogue = data.dialogue;
         } else {
-          // Clear old dialogue while we wait for audio — shows "..." as a loading state
+          // Clear old dialogue while we wait for audio - shows "..." as a loading state
           this.diegoDialogue = "...";
-          // Hold the dialogue text — wait for audio to arrive so we can sync them
+          // Hold the dialogue text - wait for audio to arrive so we can sync them
           this.pendingDialogue = data;
           this.audioFallbackTimer = setTimeout(() => {
-            // Audio didn't arrive in time (TTS failed) — show text anyway
+            // Audio didn't arrive in time (TTS failed) - show text anyway
             if (this.pendingDialogue) {
               this.typewriterSpeed = 25;
               this.diegoDialogue = this.pendingDialogue.dialogue;
@@ -136,7 +156,7 @@ export default defineComponent({
       });
 
       socket.on("diego_audio", (data: ArrayBuffer) => {
-        // Cancel the fallback timer — audio arrived
+        // Cancel the fallback timer - audio arrived
         if (this.audioFallbackTimer) {
           clearTimeout(this.audioFallbackTimer);
           this.audioFallbackTimer = null;
@@ -197,9 +217,6 @@ export default defineComponent({
         }, 5000);
       });
 
-      socket.on("case_result", (result) => {
-        this.$emit("result", result);
-      });
     },
 
     async initVAD() {
@@ -208,7 +225,7 @@ export default defineComponent({
           // Don't send audio if game is over (confession or time up)
           if (this.confession || this.secondsLeft <= 0) return;
 
-          // Skip clips shorter than ~0.8s at 16kHz — likely noise, not speech
+          // Skip clips shorter than ~0.8s at 16kHz - likely noise, not speech
           const MIN_SAMPLES = 16000 * 0.8;
           if (audio.length < MIN_SAMPLES) return;
 
@@ -249,6 +266,12 @@ export default defineComponent({
       this.$emit("verdict");
     },
 
+    quitGame() {
+      this.cleanup();
+      getSocket().disconnect();
+      this.$emit("quit");
+    },
+
     cleanup() {
       if (this.timerInterval) {
         clearInterval(this.timerInterval);
@@ -259,10 +282,14 @@ export default defineComponent({
       if (this.audioFallbackTimer) {
         clearTimeout(this.audioFallbackTimer);
       }
+      if (this.confessionTimer) {
+        clearTimeout(this.confessionTimer);
+      }
       if (this.currentAudio) {
         this.currentAudio.pause();
         this.currentAudio = null;
       }
+      stopAllLoops();
       destroyVAD();
       const socket = getSocket();
       socket.off("status");
@@ -270,13 +297,13 @@ export default defineComponent({
       socket.off("diego_response");
       socket.off("diego_audio");
       socket.off("error");
-      socket.off("case_result");
-      // Don't disconnect — VerdictScreen needs the same session & game state
+      // Don't disconnect - VerdictScreen needs the same session & game state
     },
 
     toggleMute() {
       this.audioMuted = !this.audioMuted;
-      // Stop any currently playing audio when muting
+      setMuted(this.audioMuted);
+      // Stop any currently playing TTS audio when muting
       if (this.audioMuted && this.currentAudio) {
         this.currentAudio.pause();
         this.currentAudio = null;
@@ -287,7 +314,7 @@ export default defineComponent({
 </script>
 
 <template>
-  <div class="game-screen">
+  <div class="game-screen" :class="{ 'cursor-wait': status === 'transcribing' || status === 'thinking' }">
     <div class="game-center">
 
       <!-- Main dialogue box -->
@@ -295,16 +322,23 @@ export default defineComponent({
         <div class="main-box-header">
           <span class="timer" :class="{ urgent: secondsLeft <= 60 }">{{ timerDisplay }}</span>
           <span class="case-title">CASE: THE MUSEUM THEFT</span>
+          <button class="quit-btn" @click="quitGame" aria-label="Abandon case and return to title">QUIT</button>
         </div>
         <div class="main-box-body" aria-live="polite">
-          <div class="player-dialogue" v-if="playerText">
-            <DialogueBox speaker="DETECTIVE (YOU)" :text="playerText" :instant="true" />
+          <div class="player-dialogue">
+            <DialogueBox
+              speaker="DETECTIVE (YOU)"
+              :text="playerText || '...'"
+              :instant="true"
+              portrait="/detective.png"
+            />
           </div>
           <div class="diego-dialogue">
             <DialogueBox
-              :speaker="'DIOGO FONSECA — [' + diegoEmotion.toUpperCase() + ']'"
+              speaker="DIEGO FONSECA"
               :text="diegoDialogue"
               :speed="typewriterSpeed"
+              portrait="/diego.png"
             />
           </div>
           <div class="confession-banner" v-if="confession" role="alert">DIOGO HAS CONFESSED!</div>
@@ -322,10 +356,15 @@ export default defineComponent({
       <div class="controls-row">
         <MicButton :status="status" />
         <div class="action-buttons">
-          <button class="mute-btn" @click="toggleMute" :aria-label="audioMuted ? 'Unmute voice' : 'Mute voice'">
-            {{ audioMuted ? 'VOICE OFF' : 'VOICE ON' }}
+          <button class="mute-btn" @click="toggleMute" :aria-label="audioMuted ? 'Unmute audio' : 'Mute audio'">
+            {{ audioMuted ? 'AUDIO OFF' : 'AUDIO ON' }}
           </button>
-          <button class="end-btn" @click="endInterrogation" aria-label="End interrogation">END INTERROGATION</button>
+          <button
+            class="end-btn"
+            :disabled="contradictions.length < 1"
+            @click="endInterrogation"
+            aria-label="End interrogation"
+          >END INTERROGATION</button>
         </div>
       </div>
 
@@ -350,7 +389,7 @@ export default defineComponent({
   gap: 1rem;
 }
 
-/* Main dialogue box — pixel frame */
+/* Main dialogue box - pixel frame */
 .main-box {
   border: 14px solid transparent;
   border-image-source: url('/frame.webp');
@@ -384,6 +423,26 @@ export default defineComponent({
   letter-spacing: 0.1em;
 }
 
+.quit-btn {
+  font-family: inherit;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  background: transparent;
+  color: #555;
+  border: 1px solid #555;
+  letter-spacing: 0.1em;
+}
+
+.quit-btn:hover {
+  color: #999;
+  border-color: #999;
+}
+
+.quit-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 .main-box-body {
   padding: 1rem;
   display: flex;
@@ -392,13 +451,13 @@ export default defineComponent({
   min-height: 200px;
 }
 
-/* Detective = blue accent, Diego = red accent */
-.player-dialogue :deep(.speaker) {
-  color: #5dade2;
+/* Accent colours - border + speaker name always match */
+.player-dialogue :deep(.dialogue-box) {
+  --accent: #5dade2;
 }
 
-.player-dialogue :deep(.dialogue-box) {
-  border-color: #5dade2;
+.diego-dialogue :deep(.dialogue-box) {
+  --accent: #f0c040;
 }
 
 /* Evidence panels */
@@ -451,12 +510,15 @@ export default defineComponent({
   background: transparent;
   color: #e74c3c;
   border: 1px solid #e74c3c;
-  cursor: pointer;
   letter-spacing: 0.1em;
   white-space: nowrap;
 }
 
-.end-btn:hover {
+.end-btn:disabled {
+  opacity: 0.3;
+}
+
+.end-btn:hover:not(:disabled) {
   background: #e74c3c;
   color: #fff;
 }
@@ -468,7 +530,6 @@ export default defineComponent({
   background: transparent;
   color: #999;
   border: 1px solid #999;
-  cursor: pointer;
   letter-spacing: 0.1em;
   white-space: nowrap;
 }
@@ -478,7 +539,7 @@ export default defineComponent({
   color: #1a1a2e;
 }
 
-/* Focus visible — WCAG 2.2 */
+/* Focus visible - WCAG 2.2 */
 .end-btn:focus-visible,
 .mute-btn:focus-visible {
   outline: 2px solid #fff;

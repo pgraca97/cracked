@@ -11,11 +11,11 @@ from prompts import DIEGO_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT, CLEANUP_PROMPT_TEM
 
 API_TIMEOUT = 45  # seconds (magistral needs more time for reasoning)
 
-# Diego model: supports "mistral-small-latest" or "magistral-small-latest" (reasoning)
-DIEGO_MODEL = os.environ.get("DIEGO_MODEL", "mistral-small-latest")
-print(f"Using Diego model: {DIEGO_MODEL}")
-# Judge/cleanup: always cheap and fast
-JUDGE_MODEL = "mistral-small-latest"
+DIEGO_MODEL = os.environ.get("DIEGO_MODEL", "magistral-medium-latest")
+# Judge: medium for better contradiction detection and fact extraction accuracy
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "mistral-medium-latest")
+# Cleanup: small is fast enough for phonetic word fixes — runs every turn before player sees text
+CLEANUP_MODEL = os.environ.get("CLEANUP_MODEL", "mistral-small-latest")
 
 
 _client: Mistral | None = None
@@ -41,7 +41,7 @@ async def transcribe(audio_bytes: bytes) -> str:
         with open(tmp_path, "rb") as audio_file:
             result = await asyncio.wait_for(
                 client.audio.transcriptions.complete_async(
-                    model="voxtral-mini-2602",
+                    model="voxtral-mini-latest",
                     file={
                         "file_name": "audio.wav",
                         "content": audio_file,
@@ -49,11 +49,16 @@ async def transcribe(audio_bytes: bytes) -> str:
                     language="en",
                     # Bias toward game-specific proper nouns — prevents common mistranscriptions
                     context_bias=[
+                        # Character names
                         "André", "Diego", "Fonseca", "Lopes",
                         "Marcus", "Webb", "Sarah", "Mitchell",
                         "James", "Barlow", "Eleanor", "Voss",
-                        "gala", "Municipal", "diamond", "corridor",
-                        "locker", "backpack",
+                        # Locations — split into individual words
+                        "diamond", "corridor", "security", "locker",
+                        "display", "parking",
+                        # Key terms
+                        "backpack", "gala", "bathroom", "shift",
+                        "André", "access",
                     ],
                 ),
                 timeout=API_TIMEOUT,
@@ -124,7 +129,7 @@ def _parse_magistral_response(content) -> tuple[str, str]:
     """Extract (internal_thought, json_text) from a magistral reasoning response.
 
     Handles multiple response formats from the SDK:
-    - str: plain text (non-reasoning fallback, or old <think> tag format)
+    - str: plain text (non-reasoning fallback, or old ქ tag format)
     - list of typed chunks with "thinking" and "text" types (SDK 1.12+, model -2509)
     - SDK objects with .type, .thinking, .text attributes
     """
@@ -132,16 +137,10 @@ def _parse_magistral_response(content) -> tuple[str, str]:
     json_text = ""
     all_text_parts = []
 
-    # Debug: log the raw content structure
-    print(f"[magistral] content type={type(content).__name__}, "
-          f"is_str={isinstance(content, str)}, is_list={isinstance(content, list)}")
-
     if isinstance(content, str):
-        # Log the actual string so we can see what magistral returned
-        print(f"[magistral] string content (first 500 chars): {repr(content[:500])}")
-        # Could be old <think>...</think> format or plain text
-        if "<think>" in content:
-            think_match = re.search(r'<think>(.*?)</think>(.*)', content, re.DOTALL)
+        # Could be old ქ...ground format or plain text
+        if "ქ" in content:
+            think_match = re.search(r'ქ(.*?)ქ(.*)', content, re.DOTALL)
             if think_match:
                 internal_thought = think_match.group(1).strip()
                 remaining = think_match.group(2).strip()
@@ -149,14 +148,10 @@ def _parse_magistral_response(content) -> tuple[str, str]:
         return "", _extract_json_from_text(content)
 
     if not content:
-        print("[magistral] content is empty/None")
         return "", ""
 
     # Handle both list and single object
     chunks = content if isinstance(content, list) else [content]
-
-    print(f"[magistral] {len(chunks)} chunks: "
-          f"{[_get_chunk_attr(c, 'type', '?') for c in chunks]}")
 
     for chunk in chunks:
         chunk_type = _get_chunk_attr(chunk, "type")
@@ -172,19 +167,11 @@ def _parse_magistral_response(content) -> tuple[str, str]:
             text = _get_chunk_attr(chunk, "text", "")
             if text:
                 json_text += text
-            else:
-                print(f"[magistral] text chunk had empty text, chunk={repr(chunk)[:200]}")
         else:
             # Unknown chunk type — might contain useful text
             text = _get_chunk_attr(chunk, "text", "")
             if text:
                 all_text_parts.append(text)
-            print(f"[magistral] unknown chunk type={chunk_type}, chunk={repr(chunk)[:200]}")
-
-    # Log what we extracted
-    print(f"[magistral] thinking={len(internal_thought)} chars, "
-          f"json_text={len(json_text)} chars, "
-          f"json_text_preview={repr(json_text[:200]) if json_text else 'EMPTY'}")
 
     json_text = _extract_json_from_text(json_text)
 
@@ -192,8 +179,6 @@ def _parse_magistral_response(content) -> tuple[str, str]:
     if not json_text and all_text_parts:
         combined = "\n".join(all_text_parts)
         json_text = _extract_json_from_text(combined)
-        if json_text:
-            print(f"[magistral] found JSON in thinking chunks instead (fallback)")
 
     return internal_thought, json_text
 
@@ -270,11 +255,7 @@ async def chat(game_state: GameState, player_text: str) -> DiegoResponse:
             if is_magistral:
                 internal_thought, raw_json = _parse_magistral_response(raw_content)
                 if not raw_json or not raw_json.strip():
-                    # Log what we got so we can debug
-                    content_type = type(raw_content).__name__
-                    content_preview = repr(raw_content)[:200] if raw_content else "None"
-                    print(f"[magistral attempt {attempt+1}] Empty JSON. Content type={content_type}, preview={content_preview}")
-                    raise ValueError(f"Empty text chunk from magistral (type={content_type})")
+                    raise ValueError("Empty text chunk from magistral")
                 data = json.loads(raw_json)
                 # Magistral's thinking becomes the internal_thought
                 if internal_thought and not data.get("internal_thought"):
@@ -293,8 +274,6 @@ async def chat(game_state: GameState, player_text: str) -> DiegoResponse:
             return resp
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             last_error = exc
-            if is_magistral:
-                print(f"[magistral attempt {attempt+1}] Parse error: {exc}")
 
     raise ValueError(f"Mistral returned invalid JSON after {max_attempts} attempts: {last_error}")
 
@@ -352,67 +331,44 @@ Evaluate this turn."""
         return JudgeResponse()
 
 
-# TODO: Cleanup logic commented out — not working properly yet, will revisit
-# # Known STT errors that happen repeatedly — fix these deterministically before LLM cleanup
-# _STT_FIXES = [
-#     # "Soy" is Spanish, Voxtral confuses it with English "So" at sentence boundaries
-#     (re.compile(r'\bSoy\b'), 'So'),
-#     (re.compile(r'\bsoy\b'), 'so'),
-#     # Accent on André
-#     (re.compile(r'\bAndre\b'), 'André'),
-#     # Common name mishearing
-#     (re.compile(r'\bDio\b'), 'Diego'),
-# ]
-# 
-# 
-# def _apply_stt_fixes(text: str) -> str:
-#     """Fast deterministic fixes for known repeated STT errors."""
-#     for pattern, replacement in _STT_FIXES:
-#         text = pattern.sub(replacement, text)
-#     return text
-# 
-# 
-# async def clean_transcription(
-#     raw_text: str,
-#     recent_history: list[ChatMessage],
-# ) -> str:
-#     """Quick cleanup of speech-to-text artifacts using conversation context."""
-#     # Apply deterministic fixes first — free, instant, can't change meaning
-#     raw_text = _apply_stt_fixes(raw_text)
-# 
-#     client = _get_client()
-# 
-#     # Build context from recent exchanges
-#     if recent_history:
-#         context_lines = []
-#         for m in recent_history[-6:]:
-#             speaker = "Detective" if m.role == "user" else "Diego"
-#             context_lines.append(f"{speaker}: {m.content}")
-#         context_section = "Recent conversation for context:\n" + "\n".join(context_lines)
-#     else:
-#         context_section = ""
-# 
-#     prompt = CLEANUP_PROMPT_TEMPLATE.format(
-#         raw_text=raw_text,
-#         context_section=context_section,
-#     )
-# 
-#     try:
-#         response = await asyncio.wait_for(
-#             client.chat.complete_async(
-#                 model=JUDGE_MODEL,
-#                 messages=[{"role": "user", "content": prompt}],
-#                 temperature=0.0,
-#             ),
-#             timeout=5,  # Must be fast — blocks the player seeing their text
-#         )
-#         cleaned = response.choices[0].message.content.strip()
-#         # Sanity: if cleanup returned something wildly different in length, keep original
-#         if len(cleaned) < len(raw_text) * 0.3 or len(cleaned) > len(raw_text) * 3:
-#             return raw_text
-#         # Strip quotes if the model wrapped it
-#         if cleaned.startswith('"') and cleaned.endswith('"'):
-#             cleaned = cleaned[1:-1]
-#         return cleaned
-#     except Exception:
-#         return raw_text  # Fallback to raw on any failure
+async def clean_transcription(
+    raw_text: str,
+    recent_history: list[ChatMessage],
+) -> str:
+    """Quick cleanup of speech-to-text artifacts using conversation context."""
+    client = _get_client()
+
+    # Build context from recent exchanges
+    if recent_history:
+        context_lines = []
+        for m in recent_history[-6:]:
+            speaker = "Detective" if m.role == "user" else "Diego"
+            context_lines.append(f"{speaker}: {m.content}")
+        context_section = "Recent conversation for context:\n" + "\n".join(context_lines)
+    else:
+        context_section = ""
+
+    prompt = CLEANUP_PROMPT_TEMPLATE.format(
+        raw_text=raw_text,
+        context_section=context_section,
+    )
+
+    try:
+        response = await asyncio.wait_for(
+            client.chat.complete_async(
+                model=CLEANUP_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+            ),
+            timeout=5,  # Must be fast — blocks the player seeing their text
+        )
+        cleaned = response.choices[0].message.content.strip()
+        # Sanity: if cleanup returned something wildly different in length, keep original
+        if len(cleaned) < len(raw_text) * 0.3 or len(cleaned) > len(raw_text) * 3:
+            return raw_text
+        # Strip quotes if the model wrapped it
+        if cleaned.startswith('"') and cleaned.endswith('"'):
+            cleaned = cleaned[1:-1]
+        return cleaned
+    except Exception:
+        return raw_text  # Fallback to raw on any failure

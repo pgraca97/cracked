@@ -96,15 +96,13 @@ async def player_audio(sid, data):
         await sio.emit("status", "listening", room=sid)
         return
 
-    # 2. Clean transcription (fast — fixes "Soy Diego" → "So Diego" etc.)
-    # TODO: Cleanup not working properly yet — commented out for now
-    # try:
-    #     player_text = await ai_client.clean_transcription(
-    #         raw_text, engine.state.conversation_history[-6:]
-    #     )
-    # except Exception:
-    #     player_text = raw_text  # Fallback to raw on failure
-    player_text = raw_text  # Using raw transcription directly
+    # 2. Clean transcription (deterministic fixes + LLM for phonetic confusions)
+    try:
+        player_text = await ai_client.clean_transcription(
+            raw_text, engine.state.conversation_history[-6:]
+        )
+    except Exception:
+        player_text = raw_text  # Fallback to raw on failure
 
     await sio.emit("player_text", player_text, room=sid)
 
@@ -116,10 +114,6 @@ async def player_audio(sid, data):
         await sio.emit("error", f"AI response failed: {exc}", room=sid)
         await sio.emit("status", "listening", room=sid)
         return
-
-    # Update player text in UI if the judge enhanced the punctuation
-    if enhanced_text != player_text:
-        await sio.emit("player_text", enhanced_text, room=sid)
 
     # 4. Send text + tell frontend whether to wait for audio
     await sio.emit("diego_response", {
@@ -137,8 +131,8 @@ async def player_audio(sid, data):
         audio = await tts_client.synthesize(response.dialogue, response.emotion)
         if audio:
             await sio.emit("diego_audio", audio, room=sid)
-    except Exception as exc:
-        print(f"[TTS] Failed (non-fatal): {exc}")
+    except Exception:
+        pass  # TTS failure is non-fatal
 
     if not engine.state.confession_triggered:
         await sio.emit("status", "listening", room=sid)

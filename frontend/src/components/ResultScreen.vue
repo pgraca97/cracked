@@ -21,17 +21,13 @@ export default defineComponent({
   emits: ["restart"],
 
   computed: {
-    starsDisplay(): string {
-      if (this.result.stars === 0) return "CASE COLD";
-      return Array(this.result.stars).fill("\u2b50").join("");
+    starCount(): number {
+      return this.result.stars;
     },
     timeDisplay(): string {
       const m = Math.floor(this.result.time_seconds / 60);
       const s = Math.floor(this.result.time_seconds % 60);
       return `${m}m ${s}s`;
-    },
-    isLegendary(): boolean {
-      return this.result.time_seconds < 300;
     },
   },
 });
@@ -39,7 +35,16 @@ export default defineComponent({
 
 <template>
   <div class="result-screen">
-    <h1 class="stars">{{ starsDisplay }}</h1>
+    <div class="stars">
+      <span v-if="starCount === 0" class="case-cold">CASE COLD</span>
+      <img
+        v-for="n in starCount"
+        :key="n"
+        src="/star.gif"
+        alt="★"
+        class="star-img"
+      />
+    </div>
     <p class="summary">{{ result.summary }}</p>
 
     <div class="stats">
@@ -61,8 +66,6 @@ export default defineComponent({
       </div>
     </div>
 
-    <p v-if="isLegendary" class="badge">LEGENDARY DETECTIVE</p>
-
     <button class="restart-btn" @click="$emit('restart')">PLAY AGAIN</button>
   </div>
 </template>
@@ -79,7 +82,22 @@ export default defineComponent({
 }
 
 .stars {
-  font-size: 3rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+}
+
+.star-img {
+  width: auto;
+  height: 52px;
+  image-rendering: pixelated;
+}
+
+.case-cold {
+  font-size: 2rem;
+  letter-spacing: 0.15em;
 }
 
 .summary {
@@ -116,13 +134,6 @@ export default defineComponent({
   font-size: 1rem;
 }
 
-.badge {
-  color: #f39c12;
-  font-weight: bold;
-  letter-spacing: 0.2em;
-  font-size: 1.1rem;
-}
-
 .restart-btn {
   font-family: inherit;
   font-size: 1rem;
@@ -130,7 +141,6 @@ export default defineComponent({
   background: transparent;
   color: #e0e0e0;
   border: 1px solid #e0e0e0;
-  cursor: pointer;
   letter-spacing: 0.1em;
 }
 

@@ -1,9 +1,22 @@
 <script lang="ts">
 import { defineComponent } from "vue";
+import { preloadSounds, startLoop } from "../composables/useSounds";
 
 export default defineComponent({
   name: "TitleScreen",
   emits: ["start"],
+
+  mounted() {
+    preloadSounds();
+  },
+
+  methods: {
+    beginInterrogation() {
+      // Start the hum here - inside the click gesture, before the screen transition
+      startLoop("ambientHum");
+      this.$emit("start");
+    },
+  },
 });
 </script>
 
@@ -14,17 +27,19 @@ export default defineComponent({
       <p class="label">CASE FILE #2026-0301</p>
       <p>
         Last night, the Star Diamond was stolen from the Municipal Museum during
-        a charity gala. The alarm on the display case was deactivated by someone
-        with internal access. The diamond, valued at &euro;2 million, disappeared
-        between 9:00 PM and 11:00 PM.
+        a charity gala. The alarm on the display case was deactivated from the
+        inside. The diamond, valued at &euro;2 million, disappeared between
+        9:00 PM and 11:00 PM.
       </p>
       <p>
-        Your suspect: <strong>DIEGO FONSECA</strong>, 34, museum security guard
-        for 3 years. He was the last person seen near the diamond room.
+        Person of interest: <strong>DIEGO FONSECA</strong>, 34, museum security
+        guard for 3 years. He was on duty during the theft and was the last
+        person seen near the diamond room.
       </p>
       <ul>
-        <li>The display case alarm was disabled using security guard Andr&eacute; Lopes' access code</li>
-        <li>Andr&eacute; Lopes ended his shift at 9:00 PM and joined the gala as a guest</li>
+        <li>The display case alarm was disabled using a security staff access code</li>
+        <li>Each guard has a unique code &mdash; the one used belongs to Andr&eacute; Lopes, who ended his shift at 9:00 PM</li>
+        <li>Andr&eacute; Lopes joined the gala as a guest after clocking out</li>
         <li>A security camera in the north corridor captured movement at 9:25 PM (blurry image)</li>
         <li>The diamond was reported missing at 11:30 PM by the cleaning crew</li>
         <li>Staff lockers have not been searched (warrant pending)</li>
@@ -32,7 +47,7 @@ export default defineComponent({
       </ul>
       <p class="instruction">You have 10 minutes. Find the truth.</p>
     </div>
-    <button class="start-btn" @click="$emit('start')">BEGIN INTERROGATION</button>
+    <button class="start-btn" @click="beginInterrogation">BEGIN INTERROGATION</button>
   </div>
 </template>
 
@@ -94,7 +109,6 @@ export default defineComponent({
   background: #e74c3c;
   color: #fff;
   border: none;
-  cursor: pointer;
   letter-spacing: 0.1em;
 }
 

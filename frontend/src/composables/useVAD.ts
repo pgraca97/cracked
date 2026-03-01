@@ -17,10 +17,10 @@ export async function startVAD(
     // Raise speech threshold so desk knocks, dog barks, vacuum, etc. don't trigger
     positiveSpeechThreshold: 0.8,
     negativeSpeechThreshold: 0.3,
-    // Discard audio shorter than ~0.5s — allows short follow-ups like "Are you sure?"
+    // Discard audio shorter than ~0.5s - allows short follow-ups like "Are you sure?"
     // while still filtering out coughs and knocks
     minSpeechMs: 500,
-    // Wait 1.5s of silence before deciding speech ended — users ask long multi-clause questions
+    // Wait 1.5s of silence before deciding speech ended - users ask long multi-clause questions
     redemptionMs: 1500,
     onSpeechEnd(audio: Float32Array) {
       onSpeechEnd(audio);
@@ -70,7 +70,7 @@ export function float32ToWav(samples: Float32Array, sampleRate = 16000): ArrayBu
   writeString(view, 36, "data");
   view.setUint32(40, dataLength, true);
 
-  // PCM samples — clamp to [-1, 1] and convert to 16-bit int
+  // PCM samples - clamp to [-1, 1] and convert to 16-bit int
   let offset = 44;
   for (let i = 0; i < samples.length; i++) {
     const raw: number = samples[i] as number;

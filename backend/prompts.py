@@ -256,22 +256,31 @@ And fill contradiction_explanation with a brief description of what the inconsis
 
 
 CLEANUP_PROMPT_TEMPLATE = """\
-You are a MINIMAL transcription corrector for a detective interrogation game. The player speaks English.
+You are a MINIMAL transcription corrector for a detective interrogation game. The player speaks English (possibly non-native).
 
-Your job is EXTREMELY LIMITED. You may ONLY:
-1. Fix garbled non-English fragments caused by speech-to-text errors (e.g., "Soy Diego" → "So Diego", "Usa André" → "who's André")
-2. Fix accent marks on known names: "Andre" → "André"
-3. Fix clearly broken punctuation (missing question marks on obvious questions)
+Speech-to-text often substitutes phonetically similar words that break the sentence's meaning. Your job is to fix these while preserving the player's INTENT.
+
+You may fix:
+1. Phonetic word confusions where the substituted word makes no sense in context (e.g., "shake your phone" → "check your phone", "what's your world here" → "what's your role here", "undress code" → "André's code", "ss code" → "access code")
+2. Garbled non-English fragments (e.g., "Soy Diego" → "So Diego")
+3. Missing question marks on obvious questions
+4. Accent marks on known names: "Andre" → "André"
+
+How to decide if a word is a phonetic error:
+- Read the full sentence. Does the word make sense in the context of a police interrogation?
+- If YES: leave it alone, even if it sounds odd
+- If NO: find the phonetically closest word that DOES make sense in context and replace it
 
 You must NEVER:
-- Change any names the player used, even if they seem "wrong" (the player may be deliberately using a fake name to test the suspect)
-- Change any numbers, times, or dates (the player may be deliberately using wrong values)
-- Rephrase, reorder words, or change sentence structure in ANY way
-- Merge separate questions into one (keep "Check your phone? Wash your hands?" as separate questions, NOT "Check your phone, wash your hands?")
-- Add or remove words
+- Change any numbers, times, or dates (the player may deliberately use wrong values to test the suspect — "9", "10", "11" must stay exactly as transcribed)
+- Change names the player used, even if they seem wrong (the player may use fake names to test the suspect)
+- Rephrase, reorder words, or change sentence structure
+- Merge separate sentences or questions into one
+- Add words that weren't there (fixing "ss code" → "access code" restores a dropped syllable, that's fine — but don't insert entirely new words)
 - "Improve" grammar or formality
+- Guess what the player "meant to say" based on the game's story — only fix what's clearly broken at the language level
 
-If the transcription is already readable English, return it UNCHANGED — even if the grammar is imperfect.
+If the transcription is already readable and makes sense, return it UNCHANGED.
 
 {context_section}
 Raw transcription: "{raw_text}"

@@ -1,5 +1,6 @@
 <script lang="ts">
 import { defineComponent } from "vue";
+import { getSocket } from "./composables/useSocket";
 import TitleScreen from "./components/TitleScreen.vue";
 import GameScreen from "./components/GameScreen.vue";
 import VerdictScreen from "./components/VerdictScreen.vue";
@@ -39,6 +40,8 @@ export default defineComponent({
       this.currentScreen = "result";
     },
     restart() {
+      // Disconnect so a new sid + fresh GameEngine is created on reconnect
+      getSocket().disconnect();
       this.caseResult = null;
       this.currentScreen = "title";
     },
@@ -53,7 +56,7 @@ export default defineComponent({
       v-else-if="currentScreen === 'game'"
       key="game"
       @verdict="showVerdict"
-      @result="showResult"
+      @quit="restart"
     />
     <VerdictScreen
       v-else-if="currentScreen === 'verdict'"
@@ -103,6 +106,28 @@ body {
   color: #e0e0e0;
   font-family: 'Pixelify Sans', 'Courier New', monospace;
   min-height: 100vh;
+  cursor: url('/cursor/pointer_a.png') 4 2, default;
+}
+
+/* Pixel cursors - global overrides */
+a,
+button,
+[role="button"],
+input[type="submit"],
+label[for],
+select,
+.clickable {
+  cursor: url('/cursor/hand_point.png') 10 4, pointer;
+}
+
+button:disabled,
+.disabled {
+  cursor: url('/cursor/disabled.png') 16 16, not-allowed;
+}
+
+.cursor-wait,
+.cursor-wait * {
+  cursor: url('/cursor/busy_hourglass.png') 16 16, wait !important;
 }
 
 #app {

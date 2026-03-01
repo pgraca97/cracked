@@ -79,7 +79,6 @@ h1 {
   font-size: 1.2rem;
   padding: 1rem 2.5rem;
   border: 2px solid;
-  cursor: pointer;
   letter-spacing: 0.1em;
   background: transparent;
 }

@@ -161,7 +161,7 @@ class GameEngine:
                 time_seconds=time_elapsed,
                 summary="Enough evidence to prosecute, but no confession.",
             )
-        else:
+        elif n == 1:
             return CaseResult(
                 verdict=verdict,
                 stars=1,
@@ -169,4 +169,13 @@ class GameEngine:
                 confession=confession,
                 time_seconds=time_elapsed,
                 summary="You got the right guy, but the evidence won't hold in court.",
+            )
+        else:
+            return CaseResult(
+                verdict=verdict,
+                stars=0,
+                contradictions=n,
+                confession=confession,
+                time_seconds=time_elapsed,
+                summary="Insufficient evidence. The case was dismissed.",
             )

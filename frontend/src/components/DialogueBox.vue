@@ -1,5 +1,6 @@
 <script lang="ts">
 import { defineComponent } from "vue";
+import { playTick } from "../composables/useSounds";
 
 export default defineComponent({
   name: "DialogueBox",
@@ -8,6 +9,7 @@ export default defineComponent({
     text: { type: String, required: true },
     instant: { type: Boolean, default: false },
     speed: { type: Number, default: 25 },
+    portrait: { type: String, default: "" },
   },
 
   data() {
@@ -46,9 +48,16 @@ export default defineComponent({
       this.clearTypewriter();
       this.displayedText = "";
       let i = 0;
+      let charCount = 0;
+      // Don't tick for the "..." loading placeholder - only real dialogue
+      const shouldTick = text.length > 3;
       const tick = () => {
         if (i < text.length) {
           this.displayedText += text[i];
+          if (shouldTick && text[i] !== " ") {
+            charCount++;
+            if (charCount % 5 === 1) playTick();
+          }
           i++;
           this.typewriterTimer = setTimeout(tick, this.speed);
         }
@@ -61,22 +70,47 @@ export default defineComponent({
 
 <template>
   <div class="dialogue-box">
-    <div class="speaker">{{ speaker }}</div>
-    <div class="text">{{ displayedText }}<span class="cursor">_</span></div>
+    <img v-if="portrait" :src="portrait" alt="" class="portrait" aria-hidden="true" />
+    <div class="dialogue-content">
+      <div class="speaker">{{ speaker }}</div>
+      <div class="text">{{ displayedText }}<span class="cursor">_</span></div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .dialogue-box {
+  --accent: #aaa;
   background: #16213e;
-  border: 1px solid #2c3e50;
+  border: 3px solid var(--accent);
+  border-radius: 4px;
+  box-shadow:
+    0 0 0 1px #0d1526,
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   padding: 1rem;
   min-height: 80px;
   font-family: inherit;
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  image-rendering: pixelated;
+}
+
+.portrait {
+  width: 48px;
+  height: 48px;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.dialogue-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .speaker {
-  color: #e74c3c;
+  color: var(--accent);
   font-weight: 700;
   font-size: 0.85rem;
   margin-bottom: 0.4rem;
