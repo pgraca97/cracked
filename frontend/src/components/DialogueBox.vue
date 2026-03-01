@@ -8,6 +8,8 @@ export default defineComponent({
     text: { type: String, required: true },
     instant: { type: Boolean, default: false },
     speed: { type: Number, default: 25 },
+    // In streaming mode, text is appended externally (token by token) — no typewriter timer needed
+    streaming: { type: Boolean, default: false },
   },
 
   data() {
@@ -21,7 +23,8 @@ export default defineComponent({
     text: {
       immediate: true,
       handler(newText: string) {
-        if (this.instant) {
+        if (this.instant || this.streaming) {
+          this.clearTypewriter();
           this.displayedText = newText;
         } else {
           this.startTypewriter(newText);

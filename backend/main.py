@@ -8,10 +8,8 @@ import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from game_engine import GameEngine
+from realtime_handler import RealtimeSession
 from models import Verdict
-import ai_client
-import tts_client
 
 app = FastAPI()
 app.add_middleware(
@@ -24,137 +22,64 @@ app.add_middleware(
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 sio_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
-# One game engine per connected client
-games: dict[str, GameEngine] = {}
-# Track when each game started (wall-clock)
-start_times: dict[str, float] = {}
+# One realtime session per connected client
+sessions: dict[str, RealtimeSession] = {}
 
 
 @sio.event
 async def connect(sid, environ):
-    games[sid] = GameEngine()
-    start_times[sid] = time.time()
-    await sio.emit("status", "listening", room=sid)
+    sessions[sid] = RealtimeSession(sio, sid)
+    await sio.emit("state_change", "listening", room=sid)
 
 
 @sio.event
 async def disconnect(sid):
-    games.pop(sid, None)
-    start_times.pop(sid, None)
-
-
-
-# Transcriptions that are just noise artifacts — Voxtral's attempt to make words from nothing
-_NOISE_PHRASES = {
-    "thank you", "thank you.", "thanks.", "hey", "hey.",
-    "bye", "bye.", "you", "the", "oh", "ah", "uh",
-    "chin", "hm", "hmm", "mm", "mhm",
-}
-
-
-def _is_noise(text: str) -> bool:
-    """Return True if the transcription looks like background noise, not a real question."""
-    cleaned = text.strip().lower().rstrip(".!?,")
-    if len(cleaned) < 2:
-        return True
-    if cleaned in _NOISE_PHRASES:
-        return True
-    # Voxtral transcribing animal sounds, onomatopoeia, etc.
-    if all(c == cleaned[0] for c in cleaned.replace(" ", "")):
-        return True
-    return False
+    session = sessions.pop(sid, None)
+    if session:
+        await session.cleanup()
 
 
 @sio.event
-async def player_audio(sid, data):
-    """Main game loop — triggered when the frontend sends recorded audio."""
-    engine = games.get(sid)
-    if engine is None:
-        return
+async def speech_start(sid, data=None):
+    """VAD detected speech onset — start streaming audio to Voxtral."""
+    session = sessions.get(sid)
+    if session:
+        await session.start_speech()
 
-    # Don't process audio after confession or past the 10-minute mark
-    if engine.state.confession_triggered:
-        return
 
-    audio_bytes = bytes(data)
-    elapsed = time.time() - start_times[sid]
+@sio.event
+async def audio_chunk(sid, data):
+    """Raw PCM audio chunk from the frontend AudioWorklet."""
+    session = sessions.get(sid)
+    if session:
+        await session.feed_audio(bytes(data))
 
-    if elapsed > 600:
-        return
 
-    # 1. Transcribe
-    await sio.emit("status", "transcribing", room=sid)
-    try:
-        raw_text = await ai_client.transcribe(audio_bytes)
-    except Exception as exc:
-        await sio.emit("error", f"Transcription failed: {exc}", room=sid)
-        await sio.emit("status", "listening", room=sid)
-        return
+@sio.event
+async def speech_end(sid, data=None):
+    """VAD detected silence — close the audio stream and trigger Mistral."""
+    session = sessions.get(sid)
+    if session:
+        await session.end_speech()
 
-    # Drop noise artifacts before they waste LLM calls
-    if _is_noise(raw_text):
-        await sio.emit("status", "listening", room=sid)
-        return
 
-    # 2. Clean transcription (fast — fixes "Soy Diego" → "So Diego" etc.)
-    # TODO: Cleanup not working properly yet — commented out for now
-    # try:
-    #     player_text = await ai_client.clean_transcription(
-    #         raw_text, engine.state.conversation_history[-6:]
-    #     )
-    # except Exception:
-    #     player_text = raw_text  # Fallback to raw on failure
-    player_text = raw_text  # Using raw transcription directly
-
-    await sio.emit("player_text", player_text, room=sid)
-
-    # 3. Get Diego's response + judge evaluation
-    await sio.emit("status", "thinking", room=sid)
-    try:
-        response, enhanced_text = await engine.process_turn(player_text, elapsed)
-    except Exception as exc:
-        await sio.emit("error", f"AI response failed: {exc}", room=sid)
-        await sio.emit("status", "listening", room=sid)
-        return
-
-    # Update player text in UI if the judge enhanced the punctuation
-    if enhanced_text != player_text:
-        await sio.emit("player_text", enhanced_text, room=sid)
-
-    # 4. Send text + tell frontend whether to wait for audio
-    await sio.emit("diego_response", {
-        "dialogue": response.dialogue,
-        "emotion": response.emotion.value,
-        "contradictions": list(engine.state.contradictions_caught.values()),
-        "facts": engine.state.facts_log,
-        "confession": engine.state.confession_triggered,
-        "turn": engine.state.turn_number,
-        "tts_enabled": tts_client.TTS_ENABLED,
-    }, room=sid)
-
-    # 5. TTS — synthesize Diego's voice (skipped if TTS_ENABLED=false)
-    try:
-        audio = await tts_client.synthesize(response.dialogue, response.emotion)
-        if audio:
-            await sio.emit("diego_audio", audio, room=sid)
-    except Exception as exc:
-        print(f"[TTS] Failed (non-fatal): {exc}")
-
-    if not engine.state.confession_triggered:
-        await sio.emit("status", "listening", room=sid)
-    else:
-        await sio.emit("status", "confession", room=sid)
+@sio.event
+async def barge_in(sid, data=None):
+    """Player started speaking while Diego was responding — cut him off."""
+    session = sessions.get(sid)
+    if session:
+        await session.handle_barge_in()
 
 
 @sio.event
 async def submit_verdict(sid, data):
     """Player submits their verdict at the end of the interrogation."""
-    engine = games.get(sid)
-    if engine is None:
+    session = sessions.get(sid)
+    if session is None:
         return
 
-    elapsed = time.time() - start_times[sid]
+    elapsed = session.elapsed
     verdict = Verdict(data.get("verdict", "not_guilty"))
-    result = engine.calculate_result(verdict, elapsed)
+    result = session.engine.calculate_result(verdict, elapsed)
 
     await sio.emit("case_result", result.model_dump(), room=sid)

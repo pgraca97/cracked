@@ -1,12 +1,13 @@
 <script lang="ts">
 import { defineComponent } from "vue";
 import { getSocket } from "../composables/useSocket";
-import { startVAD, pauseVAD, resumeVAD, destroyVAD, float32ToWav } from "../composables/useVAD";
+import { initAudioStream, onAudioChunk, stopAudioChunks, destroyAudioStream } from "../composables/useAudioStream";
+import { startVAD, pauseVAD, destroyVAD } from "../composables/useVAD";
 import DialogueBox from "./DialogueBox.vue";
 import EvidencePanel from "./EvidencePanel.vue";
 import MicButton from "./MicButton.vue";
 
-interface DiegoResponse {
+interface DiegoFullResponse {
   dialogue: string;
   emotion: string;
   contradictions: string[];
@@ -23,10 +24,15 @@ export default defineComponent({
 
   data() {
     return {
+      // State machine: listening | player_speaking | processing | diego_speaking | confession
+      gameState: "listening" as string,
+      // For MicButton compatibility (maps to old status values)
       status: "listening" as string,
       playerText: "",
       diegoDialogue: "...",
       diegoEmotion: "calm",
+      // true when Diego's dialogue is being streamed token-by-token
+      diegoStreaming: false,
       contradictions: [] as string[],
       facts: [] as string[],
       confession: false,
@@ -34,19 +40,19 @@ export default defineComponent({
       secondsLeft: 600,
       timerInterval: null as ReturnType<typeof setInterval> | null,
       error: "",
-      statusTimeout: null as ReturnType<typeof setTimeout> | null,
       audioMuted: false,
       currentAudio: null as HTMLAudioElement | null,
-      pendingDialogue: null as DiegoResponse | null,
-      audioFallbackTimer: null as ReturnType<typeof setTimeout> | null,
-      typewriterSpeed: 25,
+      // Whether we're actively streaming audio chunks to backend
+      streamingAudio: false,
+      // Tracks whether we've received the first transcription delta for this utterance
+      _receivedFirstDelta: false,
     };
   },
 
   mounted() {
     this.setupSocket();
     this.startTimer();
-    this.initVAD();
+    this.initAudio();
   },
 
   beforeUnmount() {
@@ -67,38 +73,57 @@ export default defineComponent({
       const socket = getSocket();
       socket.connect();
 
-      socket.on("status", (s: string) => {
-        this.status = s;
-
-        // Clear any pending safety timeout
-        if (this.statusTimeout) {
-          clearTimeout(this.statusTimeout);
-          this.statusTimeout = null;
-        }
-
-        // Pause VAD while backend is processing, resume when listening
-        if (s === "listening") {
-          if (!this.confession) resumeVAD();
-        } else {
+      // State machine transitions from backend
+      socket.on("state_change", (state: string) => {
+        this.gameState = state;
+        // Map to MicButton-compatible status
+        if (state === "listening") {
+          this.status = "listening";
+        } else if (state === "player_speaking") {
+          this.status = "listening"; // mic is active
+        } else if (state === "processing") {
+          this.status = "thinking";
+        } else if (state === "diego_speaking") {
+          this.status = "thinking";
+        } else if (state === "confession") {
+          this.status = "listening";
+          this.confession = true;
           pauseVAD();
-          // Safety net: if stuck in transcribing/thinking for 35s, recover
-          this.statusTimeout = setTimeout(() => {
-            if (this.status !== "listening") {
-              this.status = "listening";
-              this.error = "Response timed out — try again.";
-              setTimeout(() => { this.error = ""; }, 4000);
-              if (!this.confession) resumeVAD();
-            }
-          }, 35000);
         }
       });
 
-      socket.on("player_text", (text: string) => {
-        this.playerText = text;
+      // Real-time transcription deltas — words appear as the player speaks
+      socket.on("transcription_delta", (data: { text: string }) => {
+        // Clear previous text on first delta of a new utterance
+        if (!this._receivedFirstDelta) {
+          this.playerText = "";
+          this._receivedFirstDelta = true;
+        }
+        this.playerText += data.text;
       });
 
-      socket.on("diego_response", (data: DiegoResponse) => {
-        // Update game state immediately (evidence panel, emotion label, etc.)
+      // Final transcription (end of player utterance)
+      socket.on("transcription_done", (data: { full_text: string }) => {
+        this.playerText = data.full_text;
+      });
+
+      // Streaming Diego tokens — dialogue appears word by word
+      socket.on("diego_token", (data: { token: string }) => {
+        // Ignore stale tokens arriving after barge-in
+        if (this.gameState === "player_speaking") return;
+
+        if (!this.diegoStreaming) {
+          // First token — clear the placeholder and switch to streaming mode
+          this.diegoDialogue = "";
+          this.diegoStreaming = true;
+        }
+        this.diegoDialogue += data.token;
+      });
+
+      // Full Diego response — update game state (evidence, emotion, etc.)
+      socket.on("diego_done", (data: DiegoFullResponse) => {
+        this.diegoStreaming = false;
+        this.diegoDialogue = data.dialogue;
         this.diegoEmotion = data.emotion;
         this.contradictions = data.contradictions;
         this.facts = data.facts;
@@ -108,39 +133,23 @@ export default defineComponent({
         if (data.confession) {
           pauseVAD();
         }
+      });
 
-        // Stop any audio from the previous turn
+      // Diego was interrupted by barge-in
+      socket.on("diego_interrupted", (data: { partial_dialogue: string }) => {
+        this.diegoStreaming = false;
+        // Keep whatever Diego managed to say
+        this.diegoDialogue = data.partial_dialogue;
+        // Stop any playing audio
         if (this.currentAudio) {
           this.currentAudio.pause();
           this.currentAudio = null;
         }
-
-        if (!data.tts_enabled || this.audioMuted) {
-          // TTS is off or muted — show text immediately, no waiting
-          this.typewriterSpeed = 25;
-          this.diegoDialogue = data.dialogue;
-        } else {
-          // Clear old dialogue while we wait for audio — shows "..." as a loading state
-          this.diegoDialogue = "...";
-          // Hold the dialogue text — wait for audio to arrive so we can sync them
-          this.pendingDialogue = data;
-          this.audioFallbackTimer = setTimeout(() => {
-            // Audio didn't arrive in time (TTS failed) — show text anyway
-            if (this.pendingDialogue) {
-              this.typewriterSpeed = 25;
-              this.diegoDialogue = this.pendingDialogue.dialogue;
-              this.pendingDialogue = null;
-            }
-          }, 8000);
-        }
       });
 
+      // TTS audio (if enabled)
       socket.on("diego_audio", (data: ArrayBuffer) => {
-        // Cancel the fallback timer — audio arrived
-        if (this.audioFallbackTimer) {
-          clearTimeout(this.audioFallbackTimer);
-          this.audioFallbackTimer = null;
-        }
+        if (this.audioMuted) return;
 
         const blob = new Blob([data], { type: "audio/mpeg" });
         const url = URL.createObjectURL(blob);
@@ -152,49 +161,16 @@ export default defineComponent({
           this.currentAudio = null;
         };
 
-        // Wait for audio metadata to load so we know the duration
-        audio.onloadedmetadata = () => {
-          // Match typewriter speed to audio duration
-          if (this.pendingDialogue && audio.duration > 0) {
-            const charCount = this.pendingDialogue.dialogue.length;
-            // Leave a small buffer so typewriter finishes just before audio ends
-            this.typewriterSpeed = Math.max(10, Math.floor((audio.duration * 950) / charCount));
-          }
-
-          // Start both at the same time
-          if (this.pendingDialogue) {
-            this.diegoDialogue = this.pendingDialogue.dialogue;
-            this.pendingDialogue = null;
-          }
-
-          if (!this.audioMuted) {
-            audio.play().catch((err) => {
-              console.error("Audio playback failed:", err);
-              URL.revokeObjectURL(url);
-              this.currentAudio = null;
-            });
-          }
-        };
-
-        // If metadata fails to load, show text anyway
-        audio.onerror = () => {
-          console.error("Audio load failed");
+        audio.play().catch((err) => {
+          console.error("Audio playback failed:", err);
           URL.revokeObjectURL(url);
           this.currentAudio = null;
-          if (this.pendingDialogue) {
-            this.typewriterSpeed = 25;
-            this.diegoDialogue = this.pendingDialogue.dialogue;
-            this.pendingDialogue = null;
-          }
-        };
+        });
       });
 
       socket.on("error", (msg: string) => {
         this.error = msg;
-        // Clear error after a few seconds
-        setTimeout(() => {
-          this.error = "";
-        }, 5000);
+        setTimeout(() => { this.error = ""; }, 5000);
       });
 
       socket.on("case_result", (result) => {
@@ -202,23 +178,58 @@ export default defineComponent({
       });
     },
 
-    async initVAD() {
+    async initAudio() {
       try {
-        await startVAD((audio: Float32Array) => {
-          // Don't send audio if game is over (confession or time up)
-          if (this.confession || this.secondsLeft <= 0) return;
+        // Initialize AudioWorklet and get the shared MediaStream
+        const stream = await initAudioStream();
 
-          // Skip clips shorter than ~0.8s at 16kHz — likely noise, not speech
-          const MIN_SAMPLES = 16000 * 0.8;
-          if (audio.length < MIN_SAMPLES) return;
-
-          const wav = float32ToWav(audio);
+        // Set up audio chunk forwarding (inactive until speech starts)
+        onAudioChunk((chunk: ArrayBuffer) => {
+          if (!this.streamingAudio) return;
           const socket = getSocket();
-          socket.emit("player_audio", wav);
+          socket.volatile.emit("audio_chunk", chunk);
+        });
+
+        // Set up VAD with the shared MediaStream
+        await startVAD(stream, {
+          onSpeechStart: () => {
+            if (this.confession || this.secondsLeft <= 0) return;
+
+            const socket = getSocket();
+
+            // Barge-in: player speaks while Diego is responding
+            if (this.gameState === "diego_speaking") {
+              socket.emit("barge_in");
+              if (this.currentAudio) {
+                this.currentAudio.pause();
+                this.currentAudio = null;
+              }
+              this.diegoStreaming = false;
+            }
+
+            // Don't clear playerText here — wait until we get actual transcription
+            // content to avoid the "empty detective box" flash on false VAD triggers
+            this.diegoStreaming = false;
+            this._receivedFirstDelta = false;
+
+            // Start streaming audio chunks
+            this.streamingAudio = true;
+            socket.emit("speech_start");
+          },
+
+          onSpeechEnd: () => {
+            if (this.confession || this.secondsLeft <= 0) return;
+
+            // Stop streaming audio chunks
+            this.streamingAudio = false;
+
+            const socket = getSocket();
+            socket.emit("speech_end");
+          },
         });
       } catch (err) {
-        this.error = "Microphone access denied or VAD failed to initialize.";
-        console.error("VAD init error:", err);
+        this.error = "Microphone access denied or audio initialization failed.";
+        console.error("Audio init error:", err);
       }
     },
 
@@ -237,6 +248,8 @@ export default defineComponent({
         this.timerInterval = null;
       }
       pauseVAD();
+      stopAudioChunks();
+      this.streamingAudio = false;
       this.$emit("verdict");
     },
 
@@ -246,6 +259,8 @@ export default defineComponent({
         this.timerInterval = null;
       }
       pauseVAD();
+      stopAudioChunks();
+      this.streamingAudio = false;
       this.$emit("verdict");
     },
 
@@ -253,21 +268,21 @@ export default defineComponent({
       if (this.timerInterval) {
         clearInterval(this.timerInterval);
       }
-      if (this.statusTimeout) {
-        clearTimeout(this.statusTimeout);
-      }
-      if (this.audioFallbackTimer) {
-        clearTimeout(this.audioFallbackTimer);
-      }
       if (this.currentAudio) {
         this.currentAudio.pause();
         this.currentAudio = null;
       }
+      stopAudioChunks();
+      this.streamingAudio = false;
       destroyVAD();
+      destroyAudioStream();
       const socket = getSocket();
-      socket.off("status");
-      socket.off("player_text");
-      socket.off("diego_response");
+      socket.off("state_change");
+      socket.off("transcription_delta");
+      socket.off("transcription_done");
+      socket.off("diego_token");
+      socket.off("diego_done");
+      socket.off("diego_interrupted");
       socket.off("diego_audio");
       socket.off("error");
       socket.off("case_result");
@@ -276,7 +291,6 @@ export default defineComponent({
 
     toggleMute() {
       this.audioMuted = !this.audioMuted;
-      // Stop any currently playing audio when muting
       if (this.audioMuted && this.currentAudio) {
         this.currentAudio.pause();
         this.currentAudio = null;
@@ -304,7 +318,8 @@ export default defineComponent({
             <DialogueBox
               :speaker="'DIOGO FONSECA — [' + diegoEmotion.toUpperCase() + ']'"
               :text="diegoDialogue"
-              :speed="typewriterSpeed"
+              :streaming="diegoStreaming"
+              :speed="25"
             />
           </div>
           <div class="confession-banner" v-if="confession" role="alert">DIOGO HAS CONFESSED!</div>

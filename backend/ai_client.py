@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+from typing import AsyncIterator
 
 from mistralai import Mistral
 
@@ -297,6 +298,158 @@ async def chat(game_state: GameState, player_text: str) -> DiegoResponse:
                 print(f"[magistral attempt {attempt+1}] Parse error: {exc}")
 
     raise ValueError(f"Mistral returned invalid JSON after {max_attempts} attempts: {last_error}")
+
+
+class _DialogueStreamParser:
+    """Incrementally parses a JSON stream to extract the "dialogue" field value as it arrives.
+
+    Mistral streams JSON tokens one piece at a time. We detect when we're inside
+    the "dialogue" string value and yield each chunk immediately, while buffering
+    the full JSON for final parsing.
+    """
+
+    def __init__(self):
+        self.buffer = ""
+        self.in_dialogue = False
+        self.dialogue_done = False
+        # Track whether we've seen "dialogue" key and are past the opening quote
+        self._seen_key = False
+        self._depth = 0
+        self._escape_next = False
+
+    def feed(self, token: str) -> str | None:
+        """Feed a token from the stream. Returns dialogue text to emit, or None."""
+        self.buffer += token
+
+        if self.dialogue_done:
+            return None
+
+        if not self.in_dialogue:
+            # Look for "dialogue": " pattern in the accumulated buffer
+            # We check the buffer (not just the token) because the key might span tokens
+            marker = '"dialogue":'
+            idx = self.buffer.find(marker)
+            if idx == -1:
+                # Also try with space variations
+                marker = '"dialogue" :'
+                idx = self.buffer.find(marker)
+            if idx != -1:
+                # Find the opening quote of the value
+                after_colon = self.buffer[idx + len(marker):]
+                quote_idx = after_colon.find('"')
+                if quote_idx != -1:
+                    self.in_dialogue = True
+                    # Anything after the opening quote in this token is dialogue
+                    dialogue_start = idx + len(marker) + quote_idx + 1
+                    remaining = self.buffer[dialogue_start:]
+                    # Check if dialogue ends in this same chunk
+                    text = self._extract_until_close(remaining)
+                    return text if text else None
+            return None
+
+        # We're inside the dialogue value — extract text from this token
+        return self._extract_until_close(token)
+
+    def _extract_until_close(self, text: str) -> str | None:
+        """Extract dialogue text, handling JSON string escapes. Stops at closing quote."""
+        result = []
+        for ch in text:
+            if self._escape_next:
+                self._escape_next = False
+                # Handle JSON escape sequences
+                if ch == 'n':
+                    result.append('\n')
+                elif ch == 't':
+                    result.append('\t')
+                elif ch == '"':
+                    result.append('"')
+                elif ch == '\\':
+                    result.append('\\')
+                else:
+                    result.append(ch)
+                continue
+            if ch == '\\':
+                self._escape_next = True
+                continue
+            if ch == '"':
+                # End of dialogue string
+                self.in_dialogue = False
+                self.dialogue_done = True
+                break
+            result.append(ch)
+        return "".join(result) if result else None
+
+
+async def chat_stream(game_state: GameState, player_text: str) -> AsyncIterator[tuple[str, DiegoResponse | None]]:
+    """Stream Diego's response, yielding dialogue tokens as they arrive.
+
+    Yields (token, None) for each dialogue text chunk.
+    Yields ("", DiegoResponse) at the end with the full parsed response.
+    """
+    client = _get_client()
+
+    state_summary = json.dumps({
+        "turn_number": game_state.turn_number,
+        "time_elapsed_seconds": game_state.time_elapsed_seconds,
+        "emotion_state": game_state.emotion_state.value,
+        "detective_tone": game_state.detective_tone.value,
+        "contradictions_caught": list(game_state.contradictions_caught.keys()),
+        "relationship_pressure": game_state.relationship_pressure,
+        "confession_triggered": game_state.confession_triggered,
+        "facts_log": game_state.facts_log[-30:],
+    })
+
+    messages = [
+        {"role": "system", "content": f"{DIEGO_SYSTEM_PROMPT}\n\nCurrent game state: {state_summary}"},
+    ]
+
+    recent = game_state.conversation_history[-20:]
+    for msg in recent:
+        messages.append({"role": msg.role, "content": msg.content})
+
+    messages.append({"role": "user", "content": player_text})
+
+    parser = _DialogueStreamParser()
+
+    event_stream = await client.chat.stream_async(
+        model=DIEGO_MODEL,
+        messages=messages,
+        temperature=0.7,
+        response_format={"type": "json_object"},
+    )
+    async for chunk in event_stream:
+        token = chunk.data.choices[0].delta.content or ""
+        if not token:
+            continue
+
+        dialogue_text = parser.feed(token)
+        if dialogue_text:
+            yield (dialogue_text, None)
+
+    # Parse the full buffered JSON
+    raw_json = parser.buffer.strip()
+    try:
+        data = json.loads(raw_json)
+        if isinstance(data, list):
+            data = data[0] if data and isinstance(data[0], dict) else {}
+        resp = DiegoResponse(**data)
+        resp.dialogue = _clean_dialogue(resp.dialogue)
+        yield ("", resp)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        # Try extracting JSON from possible wrapper
+        extracted = _extract_json_from_text(raw_json)
+        if extracted:
+            try:
+                data = json.loads(extracted)
+                resp = DiegoResponse(**data)
+                resp.dialogue = _clean_dialogue(resp.dialogue)
+                yield ("", resp)
+                return
+            except Exception:
+                pass
+        print(f"[stream] Failed to parse final JSON: {exc}")
+        print(f"[stream] Buffer: {raw_json[:500]}")
+        raise ValueError(f"Streaming JSON parse failed: {exc}")
 
 
 async def judge_turn(
