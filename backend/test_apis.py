@@ -3,7 +3,7 @@ Smoke tests for Mistral APIs. Run from backend/:
     python test_apis.py
 
 Tests Voxtral transcription and Mistral chat (JSON mode as Diego).
-Does NOT test ElevenLabs — saving credits for the demo.
+Does NOT test ElevenLabs - saving credits for the demo.
 """
 import asyncio
 import os

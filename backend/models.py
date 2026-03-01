@@ -23,7 +23,7 @@ class Verdict(str, Enum):
 
 
 # What Mistral returns every turn (Diego's response)
-# NOTE: contradictions_detected removed — Diego is a suspect, not a referee.
+# NOTE: contradictions_detected removed - Diego is a suspect, not a referee.
 # Contradiction catching is the player's job, validated by the judge.
 class DiegoResponse(BaseModel):
     dialogue: str

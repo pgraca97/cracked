@@ -1,5 +1,5 @@
 """
-ElevenLabs TTS — converts Diego's dialogue to speech with emotion-driven voice settings.
+ElevenLabs TTS - converts Diego's dialogue to speech with emotion-driven voice settings.
 ~10,000 free characters ≈ 100 turns. Toggle with TTS_ENABLED env var.
 """
 import os
@@ -12,7 +12,7 @@ from models import Emotion
 TTS_ENABLED = os.getenv("TTS_ENABLED", "false").lower() in ("true", "1", "yes")
 VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
 
-# Voice settings per emotion — pushed apart for noticeable contrast
+# Voice settings per emotion - pushed apart for noticeable contrast
 # stability: lower = more pitch/speed variation (shaky voice)
 # similarity_boost: how close to the original voice (lower = more distorted)
 # style: expressiveness (higher = more dramatic, costs more latency)
@@ -23,7 +23,7 @@ VOICE_SETTINGS = {
     Emotion.BREAKING:  {"stability": 0.15, "similarity_boost": 0.60, "style": 1.0},
 }
 
-# v3 audio tags prepended to text — not spoken, but guide the voice performance
+# v3 audio tags prepended to text - not spoken, but guide the voice performance
 EMOTION_TAGS = {
     Emotion.CALM:      "",
     Emotion.NERVOUS:   "[nervous] [hesitant] ",

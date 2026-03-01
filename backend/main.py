@@ -44,7 +44,7 @@ async def disconnect(sid):
 
 
 
-# Transcriptions that are just noise artifacts — Voxtral's attempt to make words from nothing
+# Transcriptions that are just noise artifacts - Voxtral's attempt to make words from nothing
 _NOISE_PHRASES = {
     "thank you", "thank you.", "thanks.", "hey", "hey.",
     "bye", "bye.", "you", "the", "oh", "ah", "uh",
@@ -67,7 +67,7 @@ def _is_noise(text: str) -> bool:
 
 @sio.event
 async def player_audio(sid, data):
-    """Main game loop — triggered when the frontend sends recorded audio."""
+    """Main game loop - triggered when the frontend sends recorded audio."""
     engine = games.get(sid)
     if engine is None:
         return
@@ -126,7 +126,7 @@ async def player_audio(sid, data):
         "tts_enabled": tts_client.TTS_ENABLED,
     }, room=sid)
 
-    # 5. TTS — synthesize Diego's voice (skipped if TTS_ENABLED=false)
+    # 5. TTS - synthesize Diego's voice (skipped if TTS_ENABLED=false)
     try:
         audio = await tts_client.synthesize(response.dialogue, response.emotion)
         if audio:

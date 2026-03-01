@@ -14,7 +14,7 @@ API_TIMEOUT = 45  # seconds (magistral needs more time for reasoning)
 DIEGO_MODEL = os.environ.get("DIEGO_MODEL", "magistral-medium-latest")
 # Judge: medium for better contradiction detection and fact extraction accuracy
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "mistral-medium-latest")
-# Cleanup: small is fast enough for phonetic word fixes — runs every turn before player sees text
+# Cleanup: small is fast enough for phonetic word fixes - runs every turn before player sees text
 CLEANUP_MODEL = os.environ.get("CLEANUP_MODEL", "mistral-small-latest")
 
 
@@ -32,7 +32,7 @@ async def transcribe(audio_bytes: bytes) -> str:
     """Send raw audio to Voxtral and return the transcribed text."""
     client = _get_client()
 
-    # Voxtral expects a file upload — write to a temp file
+    # Voxtral expects a file upload - write to a temp file
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
@@ -47,13 +47,13 @@ async def transcribe(audio_bytes: bytes) -> str:
                         "content": audio_file,
                     },
                     language="en",
-                    # Bias toward game-specific proper nouns — prevents common mistranscriptions
+                    # Bias toward game-specific proper nouns - prevents common mistranscriptions
                     context_bias=[
                         # Character names
                         "André", "Diego", "Fonseca", "Lopes",
                         "Marcus", "Webb", "Sarah", "Mitchell",
                         "James", "Barlow", "Eleanor", "Voss",
-                        # Locations — split into individual words
+                        # Locations - split into individual words
                         "diamond", "corridor", "security", "locker",
                         "display", "parking",
                         # Key terms
@@ -81,12 +81,12 @@ def _extract_json_from_text(text: str) -> str:
     if text.startswith("{"):
         return text
 
-    # Wrapped in markdown code block: ```json\n{...}\n```  — use greedy match
+    # Wrapped in markdown code block: ```json\n{...}\n```  - use greedy match
     match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
     if match:
         return match.group(1)
 
-    # Find JSON object by brace counting — handles arbitrary nesting depth
+    # Find JSON object by brace counting - handles arbitrary nesting depth
     start = text.find("{")
     if start == -1:
         return ""  # No JSON object found at all
@@ -114,7 +114,7 @@ def _extract_json_from_text(text: str) -> str:
             if depth == 0:
                 return text[start:i + 1]
 
-    # Unbalanced braces — return from first { to end and hope json.loads figures it out
+    # Unbalanced braces - return from first { to end and hope json.loads figures it out
     return text[start:]
 
 
@@ -168,7 +168,7 @@ def _parse_magistral_response(content) -> tuple[str, str]:
             if text:
                 json_text += text
         else:
-            # Unknown chunk type — might contain useful text
+            # Unknown chunk type - might contain useful text
             text = _get_chunk_attr(chunk, "text", "")
             if text:
                 all_text_parts.append(text)
@@ -184,8 +184,8 @@ def _parse_magistral_response(content) -> tuple[str, str]:
 
 
 def _clean_dialogue(text: str) -> str:
-    """Strip typographic artifacts — dialogue should read as natural spoken language."""
-    text = text.replace("—", " -- ")   # em dash → spoken pause
+    """Strip typographic artifacts - dialogue should read as natural spoken language."""
+    text = text.replace("-", " -- ")   # em dash → spoken pause
     text = text.replace("–", " -- ")   # en dash
     text = text.replace("**", "")      # bold markdown
     text = text.replace("*", "")       # italic markdown
@@ -219,14 +219,14 @@ async def chat(game_state: GameState, player_text: str) -> DiegoResponse:
     for msg in recent:
         messages.append({"role": msg.role, "content": msg.content})
 
-    # New player question — for magistral, add a JSON reminder since it tends to respond in plain text
+    # New player question - for magistral, add a JSON reminder since it tends to respond in plain text
     is_magistral = DIEGO_MODEL.startswith("magistral")
     if is_magistral:
         messages.append({"role": "user", "content": f"{player_text}\n\n[Respond ONLY with a valid JSON object. No plain text outside the JSON.]"})
     else:
         messages.append({"role": "user", "content": player_text})
 
-    # Magistral is flakier with JSON — give it more attempts
+    # Magistral is flakier with JSON - give it more attempts
     max_attempts = 3 if is_magistral else 2
     last_error: Exception | None = None
 
@@ -241,7 +241,7 @@ async def chat(game_state: GameState, player_text: str) -> DiegoResponse:
             kwargs["response_format"] = {"type": "json_object"}
         else:
             # Opt out of magistral's default system prompt (encourages Markdown/LaTeX)
-            # — our own system prompt already has all the instructions Diego needs
+            # - our own system prompt already has all the instructions Diego needs
             kwargs["prompt_mode"] = None
 
         response = await asyncio.wait_for(
@@ -327,7 +327,7 @@ Evaluate this turn."""
         data = json.loads(raw)
         return JudgeResponse(**data)
     except Exception:
-        # If judge fails, return safe defaults — don't break the game
+        # If judge fails, return safe defaults - don't break the game
         return JudgeResponse()
 
 
@@ -360,7 +360,7 @@ async def clean_transcription(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
             ),
-            timeout=5,  # Must be fast — blocks the player seeing their text
+            timeout=5,  # Must be fast - blocks the player seeing their text
         )
         cleaned = response.choices[0].message.content.strip()
         # Sanity: if cleanup returned something wildly different in length, keep original
