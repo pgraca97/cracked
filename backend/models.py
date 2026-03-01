@@ -10,20 +10,38 @@ class Emotion(str, Enum):
     BREAKING = "breaking"
 
 
+class DetectiveTone(str, Enum):
+    CASUAL = "casual"
+    PRESSING = "pressing"
+    CONFRONTATIONAL = "confrontational"
+    EMPATHETIC = "empathetic"
+
+
 class Verdict(str, Enum):
     GUILTY = "guilty"
     NOT_GUILTY = "not_guilty"
 
 
-# What Mistral returns every turn
+# What Mistral returns every turn (Diego's response)
+# NOTE: contradictions_detected removed — Diego is a suspect, not a referee.
+# Contradiction catching is the player's job, validated by the judge.
 class DiegoResponse(BaseModel):
     dialogue: str
     emotion: Emotion
     internal_thought: str = ""
     facts_mentioned: list[str] = []
-    contradictions_detected: list[str] = []
     relationship_pressured: bool = False
     confession: bool = False
+
+
+# What the judge returns after evaluating a turn
+class JudgeResponse(BaseModel):
+    facts_extracted: list[str] = []
+    contradiction_caught: Optional[str] = None  # "bathroom" | "andre_shift" | "north_corridor" | "backpack" | null
+    contradiction_explanation: str = ""
+    relationship_pressure: bool = False
+    detective_tone: DetectiveTone = DetectiveTone.CASUAL
+    player_text_enhanced: str = ""  # punctuation-corrected version of what the detective said
 
 
 # Conversation turn stored in history
@@ -38,9 +56,12 @@ class GameState(BaseModel):
     time_elapsed_seconds: float = 0.0
     time_limit_seconds: int = 600
     emotion_state: Emotion = Emotion.CALM
-    contradictions_caught: list[str] = []
+    # dict: trap_name -> explanation (deduplicates by key, values shown in evidence panel)
+    contradictions_caught: dict[str, str] = {}
     facts_log: list[str] = []
-    relationship_mentioned: bool = False
+    # 0-5 scale: how much the player has probed the personal relationship with André
+    relationship_pressure: int = 0
+    detective_tone: DetectiveTone = DetectiveTone.CASUAL
     confession_triggered: bool = False
     conversation_history: list[ChatMessage] = []
 

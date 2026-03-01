@@ -75,7 +75,7 @@ h1 {
 }
 
 .verdict-btn {
-  font-family: "Courier New", monospace;
+  font-family: inherit;
   font-size: 1.2rem;
   padding: 1rem 2.5rem;
   border: 2px solid;
@@ -102,6 +102,11 @@ h1 {
 .verdict-btn.not-guilty:hover {
   background: #27ae60;
   color: #fff;
+}
+
+.verdict-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
 .waiting {

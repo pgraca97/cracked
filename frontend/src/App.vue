@@ -47,21 +47,26 @@ export default defineComponent({
 </script>
 
 <template>
-  <TitleScreen v-if="currentScreen === 'title'" @start="startGame" />
-  <GameScreen
-    v-else-if="currentScreen === 'game'"
-    @verdict="showVerdict"
-    @result="showResult"
-  />
-  <VerdictScreen
-    v-else-if="currentScreen === 'verdict'"
-    @result="showResult"
-  />
-  <ResultScreen
-    v-else-if="currentScreen === 'result'"
-    :result="caseResult!"
-    @restart="restart"
-  />
+  <Transition name="fade" mode="out-in">
+    <TitleScreen v-if="currentScreen === 'title'" key="title" @start="startGame" />
+    <GameScreen
+      v-else-if="currentScreen === 'game'"
+      key="game"
+      @verdict="showVerdict"
+      @result="showResult"
+    />
+    <VerdictScreen
+      v-else-if="currentScreen === 'verdict'"
+      key="verdict"
+      @result="showResult"
+    />
+    <ResultScreen
+      v-else-if="currentScreen === 'result'"
+      key="result"
+      :result="caseResult!"
+      @restart="restart"
+    />
+  </Transition>
 </template>
 
 <style>
@@ -71,10 +76,32 @@ export default defineComponent({
   box-sizing: border-box;
 }
 
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #444 #1a1a2e;
+}
+
+html::-webkit-scrollbar {
+  width: 6px;
+}
+
+html::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+
+html::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+
+html::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
 body {
   background: #1a1a2e;
   color: #e0e0e0;
-  font-family: "Courier New", monospace;
+  font-family: 'Pixelify Sans', 'Courier New', monospace;
   min-height: 100vh;
 }
 
@@ -82,5 +109,23 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+/* Screen transitions */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: none;
+  }
 }
 </style>

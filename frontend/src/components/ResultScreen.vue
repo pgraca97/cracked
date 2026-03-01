@@ -124,7 +124,7 @@ export default defineComponent({
 }
 
 .restart-btn {
-  font-family: "Courier New", monospace;
+  font-family: inherit;
   font-size: 1rem;
   padding: 0.75rem 2rem;
   background: transparent;
@@ -137,5 +137,10 @@ export default defineComponent({
 .restart-btn:hover {
   background: #e0e0e0;
   color: #1a1a2e;
+}
+
+.restart-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 </style>

@@ -4,7 +4,6 @@ import { getSocket } from "../composables/useSocket";
 import { startVAD, pauseVAD, resumeVAD, destroyVAD, float32ToWav } from "../composables/useVAD";
 import DialogueBox from "./DialogueBox.vue";
 import EvidencePanel from "./EvidencePanel.vue";
-import TimerBar from "./TimerBar.vue";
 import MicButton from "./MicButton.vue";
 
 interface DiegoResponse {
@@ -14,11 +13,12 @@ interface DiegoResponse {
   facts: string[];
   confession: boolean;
   turn: number;
+  tts_enabled: boolean;
 }
 
 export default defineComponent({
   name: "GameScreen",
-  components: { DialogueBox, EvidencePanel, TimerBar, MicButton },
+  components: { DialogueBox, EvidencePanel, MicButton },
   emits: ["verdict", "result"],
 
   data() {
@@ -35,6 +35,11 @@ export default defineComponent({
       timerInterval: null as ReturnType<typeof setInterval> | null,
       error: "",
       statusTimeout: null as ReturnType<typeof setTimeout> | null,
+      audioMuted: false,
+      currentAudio: null as HTMLAudioElement | null,
+      pendingDialogue: null as DiegoResponse | null,
+      audioFallbackTimer: null as ReturnType<typeof setTimeout> | null,
+      typewriterSpeed: 25,
     };
   },
 
@@ -46,6 +51,15 @@ export default defineComponent({
 
   beforeUnmount() {
     this.cleanup();
+  },
+
+  computed: {
+    timerDisplay(): string {
+      const s = Math.max(0, this.secondsLeft);
+      const m = String(Math.floor(s / 60)).padStart(2, "0");
+      const sec = String(s % 60).padStart(2, "0");
+      return `${m}:${sec}`;
+    },
   },
 
   methods: {
@@ -84,17 +98,95 @@ export default defineComponent({
       });
 
       socket.on("diego_response", (data: DiegoResponse) => {
-        this.diegoDialogue = data.dialogue;
+        // Update game state immediately (evidence panel, emotion label, etc.)
         this.diegoEmotion = data.emotion;
         this.contradictions = data.contradictions;
         this.facts = data.facts;
         this.confession = data.confession;
         this.turn = data.turn;
 
-        // Stop capturing audio once Diego confesses
         if (data.confession) {
           pauseVAD();
         }
+
+        // Stop any audio from the previous turn
+        if (this.currentAudio) {
+          this.currentAudio.pause();
+          this.currentAudio = null;
+        }
+
+        if (!data.tts_enabled || this.audioMuted) {
+          // TTS is off or muted — show text immediately, no waiting
+          this.typewriterSpeed = 25;
+          this.diegoDialogue = data.dialogue;
+        } else {
+          // Clear old dialogue while we wait for audio — shows "..." as a loading state
+          this.diegoDialogue = "...";
+          // Hold the dialogue text — wait for audio to arrive so we can sync them
+          this.pendingDialogue = data;
+          this.audioFallbackTimer = setTimeout(() => {
+            // Audio didn't arrive in time (TTS failed) — show text anyway
+            if (this.pendingDialogue) {
+              this.typewriterSpeed = 25;
+              this.diegoDialogue = this.pendingDialogue.dialogue;
+              this.pendingDialogue = null;
+            }
+          }, 8000);
+        }
+      });
+
+      socket.on("diego_audio", (data: ArrayBuffer) => {
+        // Cancel the fallback timer — audio arrived
+        if (this.audioFallbackTimer) {
+          clearTimeout(this.audioFallbackTimer);
+          this.audioFallbackTimer = null;
+        }
+
+        const blob = new Blob([data], { type: "audio/mpeg" });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        this.currentAudio = audio;
+
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          this.currentAudio = null;
+        };
+
+        // Wait for audio metadata to load so we know the duration
+        audio.onloadedmetadata = () => {
+          // Match typewriter speed to audio duration
+          if (this.pendingDialogue && audio.duration > 0) {
+            const charCount = this.pendingDialogue.dialogue.length;
+            // Leave a small buffer so typewriter finishes just before audio ends
+            this.typewriterSpeed = Math.max(10, Math.floor((audio.duration * 950) / charCount));
+          }
+
+          // Start both at the same time
+          if (this.pendingDialogue) {
+            this.diegoDialogue = this.pendingDialogue.dialogue;
+            this.pendingDialogue = null;
+          }
+
+          if (!this.audioMuted) {
+            audio.play().catch((err) => {
+              console.error("Audio playback failed:", err);
+              URL.revokeObjectURL(url);
+              this.currentAudio = null;
+            });
+          }
+        };
+
+        // If metadata fails to load, show text anyway
+        audio.onerror = () => {
+          console.error("Audio load failed");
+          URL.revokeObjectURL(url);
+          this.currentAudio = null;
+          if (this.pendingDialogue) {
+            this.typewriterSpeed = 25;
+            this.diegoDialogue = this.pendingDialogue.dialogue;
+            this.pendingDialogue = null;
+          }
+        };
       });
 
       socket.on("error", (msg: string) => {
@@ -164,14 +256,31 @@ export default defineComponent({
       if (this.statusTimeout) {
         clearTimeout(this.statusTimeout);
       }
+      if (this.audioFallbackTimer) {
+        clearTimeout(this.audioFallbackTimer);
+      }
+      if (this.currentAudio) {
+        this.currentAudio.pause();
+        this.currentAudio = null;
+      }
       destroyVAD();
       const socket = getSocket();
       socket.off("status");
       socket.off("player_text");
       socket.off("diego_response");
+      socket.off("diego_audio");
       socket.off("error");
       socket.off("case_result");
       // Don't disconnect — VerdictScreen needs the same session & game state
+    },
+
+    toggleMute() {
+      this.audioMuted = !this.audioMuted;
+      // Stop any currently playing audio when muting
+      if (this.audioMuted && this.currentAudio) {
+        this.currentAudio.pause();
+        this.currentAudio = null;
+      }
     },
   },
 });
@@ -179,69 +288,165 @@ export default defineComponent({
 
 <template>
   <div class="game-screen">
-    <!-- Top bar: timer + end button -->
-    <div class="top-bar">
-      <TimerBar :seconds-left="secondsLeft" />
-      <button class="end-btn" @click="endInterrogation">END INTERROGATION</button>
-    </div>
+    <div class="game-center">
 
-    <!-- Main area: dialogue + evidence -->
-    <div class="main-area">
-      <div class="dialogue-area">
-        <!-- Player's transcribed text -->
-        <div class="player-bubble" v-if="playerText">
-          <DialogueBox speaker="DETECTIVE (YOU)" :text="playerText" />
+      <!-- Main dialogue box -->
+      <div class="main-box">
+        <div class="main-box-header">
+          <span class="timer" :class="{ urgent: secondsLeft <= 60 }">{{ timerDisplay }}</span>
+          <span class="case-title">CASE: THE MUSEUM THEFT</span>
         </div>
-
-        <!-- Diego's response -->
-        <div class="diego-bubble">
-          <DialogueBox
-            :speaker="'DIEGO FONSECA — [' + diegoEmotion.toUpperCase() + ']'"
-            :text="diegoDialogue"
-          />
+        <div class="main-box-body" aria-live="polite">
+          <div class="player-dialogue" v-if="playerText">
+            <DialogueBox speaker="DETECTIVE (YOU)" :text="playerText" :instant="true" />
+          </div>
+          <div class="diego-dialogue">
+            <DialogueBox
+              :speaker="'DIOGO FONSECA — [' + diegoEmotion.toUpperCase() + ']'"
+              :text="diegoDialogue"
+              :speed="typewriterSpeed"
+            />
+          </div>
+          <div class="confession-banner" v-if="confession" role="alert">DIOGO HAS CONFESSED!</div>
+          <div class="error-msg" v-if="error" role="alert">{{ error }}</div>
         </div>
+      </div>
 
-        <!-- Mic status -->
+      <!-- Evidence panels -->
+      <div class="evidence-row">
+        <EvidencePanel class="evidence-half" :facts="facts" :contradictions="[]" mode="facts" />
+        <EvidencePanel class="evidence-half" :facts="[]" :contradictions="contradictions" mode="contradictions" />
+      </div>
+
+      <!-- Controls row -->
+      <div class="controls-row">
         <MicButton :status="status" />
-
-        <!-- Confession banner -->
-        <div class="confession-banner" v-if="confession">
-          DIEGO HAS CONFESSED!
+        <div class="action-buttons">
+          <button class="mute-btn" @click="toggleMute" :aria-label="audioMuted ? 'Unmute voice' : 'Mute voice'">
+            {{ audioMuted ? 'VOICE OFF' : 'VOICE ON' }}
+          </button>
+          <button class="end-btn" @click="endInterrogation" aria-label="End interrogation">END INTERROGATION</button>
         </div>
-
-        <!-- Error display -->
-        <div class="error" v-if="error">{{ error }}</div>
       </div>
 
-      <div class="evidence-area">
-        <EvidencePanel :contradictions="contradictions" :facts="facts" />
-      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .game-screen {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem 1rem;
+}
+
+.game-center {
+  width: 100%;
+  max-width: 960px;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  padding: 1rem;
   gap: 1rem;
 }
 
-.top-bar {
+/* Main dialogue box — pixel frame */
+.main-box {
+  border: 14px solid transparent;
+  border-image-source: url('/frame.webp');
+  border-image-slice: 24;
+  border-image-repeat: stretch;
+  background: #16213e;
+  image-rendering: pixelated;
+}
+
+.main-box-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #2c3e50;
+}
+
+.timer {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.timer.urgent {
+  color: #e74c3c;
+}
+
+.case-title {
+  font-size: 0.85rem;
+  color: #999;
+  letter-spacing: 0.1em;
+}
+
+.main-box-body {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 200px;
+}
+
+/* Detective = blue accent, Diego = red accent */
+.player-dialogue :deep(.speaker) {
+  color: #5dade2;
+}
+
+.player-dialogue :deep(.dialogue-box) {
+  border-color: #5dade2;
+}
+
+/* Evidence panels */
+.evidence-row {
+  display: flex;
   gap: 1rem;
 }
 
-.top-bar > *:first-child {
+.evidence-half {
   flex: 1;
+  height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #444 transparent;
+}
+
+.evidence-half::-webkit-scrollbar {
+  width: 4px;
+}
+
+.evidence-half::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.evidence-half::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 2px;
+}
+
+.evidence-half::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+/* Controls row */
+.controls-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 0.75rem;
 }
 
 .end-btn {
-  font-family: "Courier New", monospace;
-  font-size: 0.8rem;
+  font-family: inherit;
+  font-size: 0.85rem;
   padding: 0.4rem 1rem;
   background: transparent;
   color: #e74c3c;
@@ -256,22 +461,28 @@ export default defineComponent({
   color: #fff;
 }
 
-.main-area {
-  display: flex;
-  gap: 1rem;
-  flex: 1;
+.mute-btn {
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 1rem;
+  background: transparent;
+  color: #999;
+  border: 1px solid #999;
+  cursor: pointer;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 
-.dialogue-area {
-  flex: 2;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+.mute-btn:hover {
+  background: #999;
+  color: #1a1a2e;
 }
 
-.evidence-area {
-  flex: 1;
-  min-width: 250px;
+/* Focus visible — WCAG 2.2 */
+.end-btn:focus-visible,
+.mute-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
 .confession-banner {
@@ -279,7 +490,7 @@ export default defineComponent({
   color: #fff;
   text-align: center;
   padding: 0.5rem;
-  font-weight: bold;
+  font-weight: 700;
   letter-spacing: 0.15em;
   animation: pulse 1s ease-in-out infinite;
 }
@@ -289,11 +500,17 @@ export default defineComponent({
   50% { opacity: 0.7; }
 }
 
-.error {
+.error-msg {
   color: #e74c3c;
   font-size: 0.85rem;
   padding: 0.5rem;
   background: rgba(231, 76, 60, 0.1);
   border: 1px solid #e74c3c;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confession-banner {
+    animation: none;
+  }
 }
 </style>

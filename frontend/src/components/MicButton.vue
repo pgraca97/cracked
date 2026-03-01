@@ -18,6 +18,8 @@ export default defineComponent({
           return "TRANSCRIBING...";
         case "thinking":
           return "DIEGO IS THINKING...";
+        case "confession":
+          return "CONFESSION RECORDED";
         default:
           return "...";
       }
@@ -25,40 +27,47 @@ export default defineComponent({
     isListening(): boolean {
       return this.status === "listening";
     },
+    isProcessing(): boolean {
+      return this.status === "transcribing" || this.status === "thinking";
+    },
+    isConfession(): boolean {
+      return this.status === "confession";
+    },
   },
 });
 </script>
 
 <template>
-  <div class="mic-button" :class="{ active: isListening }">
-    <div class="mic-icon">&#127908;</div>
+  <div class="mic-status" role="status" aria-live="polite" :class="{ listening: isListening, processing: isProcessing, confessed: isConfession }">
     <span class="mic-label">{{ label }}</span>
   </div>
 </template>
 
 <style scoped>
-.mic-button {
+.mic-status {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: #2c3e50;
-  border: 1px solid #555;
-  font-family: "Courier New", monospace;
+  padding: 0.4rem 1rem;
+  background: transparent;
+  border: 1px solid #888;
+  font-family: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
   color: #888;
 }
 
-.mic-button.active {
-  border-color: #e74c3c;
-  color: #e74c3c;
+.mic-status.listening {
+  border-color: #2ecc71;
+  color: #2ecc71;
 }
 
-.mic-icon {
-  font-size: 1.2rem;
+.mic-status.processing {
+  border-color: #e0e0e0;
+  color: #e0e0e0;
 }
 
-.mic-label {
-  font-size: 0.8rem;
-  letter-spacing: 0.1em;
+.mic-status.confessed {
+  border-color: #f39c12;
+  color: #f39c12;
 }
 </style>

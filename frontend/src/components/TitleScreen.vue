@@ -88,7 +88,7 @@ export default defineComponent({
 }
 
 .start-btn {
-  font-family: "Courier New", monospace;
+  font-family: inherit;
   font-size: 1.1rem;
   padding: 0.75rem 2rem;
   background: #e74c3c;
@@ -100,5 +100,10 @@ export default defineComponent({
 
 .start-btn:hover {
   background: #c0392b;
+}
+
+.start-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 </style>

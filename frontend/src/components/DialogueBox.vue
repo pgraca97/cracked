@@ -6,6 +6,8 @@ export default defineComponent({
   props: {
     speaker: { type: String, required: true },
     text: { type: String, required: true },
+    instant: { type: Boolean, default: false },
+    speed: { type: Number, default: 25 },
   },
 
   data() {
@@ -19,7 +21,11 @@ export default defineComponent({
     text: {
       immediate: true,
       handler(newText: string) {
-        this.startTypewriter(newText);
+        if (this.instant) {
+          this.displayedText = newText;
+        } else {
+          this.startTypewriter(newText);
+        }
       },
     },
   },
@@ -44,7 +50,7 @@ export default defineComponent({
         if (i < text.length) {
           this.displayedText += text[i];
           i++;
-          this.typewriterTimer = setTimeout(tick, 25);
+          this.typewriterTimer = setTimeout(tick, this.speed);
         }
       };
       tick();
@@ -63,22 +69,23 @@ export default defineComponent({
 <style scoped>
 .dialogue-box {
   background: #16213e;
-  border: 1px solid #e74c3c;
+  border: 1px solid #2c3e50;
   padding: 1rem;
   min-height: 80px;
+  font-family: inherit;
 }
 
 .speaker {
   color: #e74c3c;
-  font-weight: bold;
+  font-weight: 700;
   font-size: 0.85rem;
   margin-bottom: 0.4rem;
   letter-spacing: 0.1em;
 }
 
 .text {
-  line-height: 1.5;
-  font-size: 0.95rem;
+  line-height: 1.6;
+  font-size: 1rem;
 }
 
 .cursor {
@@ -87,5 +94,11 @@ export default defineComponent({
 
 @keyframes blink {
   50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor {
+    animation: none;
+  }
 }
 </style>

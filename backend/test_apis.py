@@ -28,8 +28,9 @@ async def test_mistral_chat():
         "time_elapsed_seconds": 10.0,
         "emotion_state": state.emotion_state.value,
         "contradictions_caught": [],
-        "relationship_mentioned": False,
+        "relationship_pressure": 0,
         "confession_triggered": False,
+        "facts_log": [],
     })
 
     messages = [

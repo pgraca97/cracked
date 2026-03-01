@@ -17,10 +17,11 @@ export async function startVAD(
     // Raise speech threshold so desk knocks, dog barks, vacuum, etc. don't trigger
     positiveSpeechThreshold: 0.8,
     negativeSpeechThreshold: 0.3,
-    // Discard audio shorter than ~1s — filters out sneezes, knocks, brief noises
-    minSpeechMs: 1000,
-    // Wait 500ms of silence before deciding speech ended — avoids clipping mid-sentence
-    redemptionMs: 500,
+    // Discard audio shorter than ~0.5s — allows short follow-ups like "Are you sure?"
+    // while still filtering out coughs and knocks
+    minSpeechMs: 500,
+    // Wait 1.5s of silence before deciding speech ended — users ask long multi-clause questions
+    redemptionMs: 1500,
     onSpeechEnd(audio: Float32Array) {
       onSpeechEnd(audio);
     },

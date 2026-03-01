@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from game_engine import GameEngine
 from models import Verdict
 import ai_client
+import tts_client
 
 app = FastAPI()
 app.add_middleware(
@@ -54,7 +55,7 @@ _NOISE_PHRASES = {
 def _is_noise(text: str) -> bool:
     """Return True if the transcription looks like background noise, not a real question."""
     cleaned = text.strip().lower().rstrip(".!?,")
-    if len(cleaned) < 3:
+    if len(cleaned) < 2:
         return True
     if cleaned in _NOISE_PHRASES:
         return True
@@ -73,54 +74,76 @@ async def player_audio(sid, data):
 
     # Don't process audio after confession or past the 10-minute mark
     if engine.state.confession_triggered:
-        await sio.emit("status", "listening", room=sid)
         return
 
     audio_bytes = bytes(data)
     elapsed = time.time() - start_times[sid]
 
     if elapsed > 600:
-        await sio.emit("status", "listening", room=sid)
         return
 
     # 1. Transcribe
     await sio.emit("status", "transcribing", room=sid)
     try:
-        player_text = await ai_client.transcribe(audio_bytes)
+        raw_text = await ai_client.transcribe(audio_bytes)
     except Exception as exc:
         await sio.emit("error", f"Transcription failed: {exc}", room=sid)
         await sio.emit("status", "listening", room=sid)
         return
 
-    # Drop noise artifacts before they waste an LLM call
-    if _is_noise(player_text):
+    # Drop noise artifacts before they waste LLM calls
+    if _is_noise(raw_text):
         await sio.emit("status", "listening", room=sid)
         return
 
+    # 2. Clean transcription (fast — fixes "Soy Diego" → "So Diego" etc.)
+    # TODO: Cleanup not working properly yet — commented out for now
+    # try:
+    #     player_text = await ai_client.clean_transcription(
+    #         raw_text, engine.state.conversation_history[-6:]
+    #     )
+    # except Exception:
+    #     player_text = raw_text  # Fallback to raw on failure
+    player_text = raw_text  # Using raw transcription directly
+
     await sio.emit("player_text", player_text, room=sid)
 
-    # 2. Get Diego's response
+    # 3. Get Diego's response + judge evaluation
     await sio.emit("status", "thinking", room=sid)
     try:
-        response = await engine.process_turn(player_text, elapsed)
+        response, enhanced_text = await engine.process_turn(player_text, elapsed)
     except Exception as exc:
         await sio.emit("error", f"AI response failed: {exc}", room=sid)
         await sio.emit("status", "listening", room=sid)
         return
 
-    # 3. Send text immediately (masks TTS latency)
+    # Update player text in UI if the judge enhanced the punctuation
+    if enhanced_text != player_text:
+        await sio.emit("player_text", enhanced_text, room=sid)
+
+    # 4. Send text + tell frontend whether to wait for audio
     await sio.emit("diego_response", {
         "dialogue": response.dialogue,
         "emotion": response.emotion.value,
-        "contradictions": engine.state.contradictions_caught,
+        "contradictions": list(engine.state.contradictions_caught.values()),
         "facts": engine.state.facts_log,
         "confession": engine.state.confession_triggered,
         "turn": engine.state.turn_number,
+        "tts_enabled": tts_client.TTS_ENABLED,
     }, room=sid)
 
-    # 4. TTS would go here — skipped until final integration
+    # 5. TTS — synthesize Diego's voice (skipped if TTS_ENABLED=false)
+    try:
+        audio = await tts_client.synthesize(response.dialogue, response.emotion)
+        if audio:
+            await sio.emit("diego_audio", audio, room=sid)
+    except Exception as exc:
+        print(f"[TTS] Failed (non-fatal): {exc}")
 
-    await sio.emit("status", "listening", room=sid)
+    if not engine.state.confession_triggered:
+        await sio.emit("status", "listening", room=sid)
+    else:
+        await sio.emit("status", "confession", room=sid)
 
 
 @sio.event
