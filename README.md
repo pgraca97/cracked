@@ -7,7 +7,7 @@ A voice-driven interrogation game built for the Mistral AI Hackathon. You speak 
 | Component | Model | Purpose |
 |---|---|---|
 | Speech-to-text | `voxtral-mini-latest` | Transcribes the player's spoken questions |
-| Suspect (Diego) | `magistral-medium-latest` | Plays the suspect - lies, deflects, breaks under pressure |
+| Suspect (Diego) | `mistral-medium-latest` | Plays the suspect - lies, deflects, breaks under pressure |
 | Judge | `mistral-medium-latest` | Evaluates each turn: extracts facts, detects contradictions, tracks relationship pressure |
 | Cleanup | `mistral-small-latest` | Fixes STT artifacts before the player sees their transcribed text |
 
@@ -88,8 +88,4 @@ frontend/src/components/
   MicButton.vue          VAD state indicator
   VerdictScreen.vue      Guilty / Not Guilty choice
   ResultScreen.vue       Score and case outcome
-
-docs/
-  game-design.md         Full story, system prompt, contradiction logic, scoring
-  mistral-ai-models.md   Reference for Mistral model selection
 ```
