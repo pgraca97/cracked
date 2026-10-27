@@ -360,7 +360,7 @@ export default defineComponent({
               portrait="/diego.png"
             />
           </div>
-          <div class="confession-banner" v-if="confession" role="alert">DIOGO HAS CONFESSED!</div>
+          <div class="confession-banner" v-if="confession" role="alert">DIEGO HAS CONFESSED!</div>
           <div class="error-msg" v-if="error" role="alert">{{ error }}</div>
         </div>
       </div>
