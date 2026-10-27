@@ -8,6 +8,7 @@ load_dotenv()
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 
 from game_engine import GameEngine
 from models import Verdict
@@ -24,6 +25,9 @@ app.add_middleware(
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 sio_app = socketio.ASGIApp(sio, other_asgi_app=app)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # One game engine per connected client
 games: dict[str, GameEngine] = {}
@@ -139,8 +143,16 @@ async def player_audio(sid, data):
             audio = await tts_client.synthesize(response.dialogue, response.emotion)
             if audio:
                 await sio.emit("diego_audio", audio, room=sid)
-        except Exception:
-            pass  # TTS failure is non-fatal
+            else:
+                logger.info("TTS synthesis returned no audio (None)")
+        except Exception as exc:
+            # Log and emit the error so the frontend/dev can observe TTS failures
+            logger.exception("TTS synthesis failed")
+            try:
+                await sio.emit("diego_audio_error", str(exc), room=sid)
+            except Exception:
+                # Emitting the error should not crash the handler
+                logger.exception("Failed to emit diego_audio_error")
 
     async def _run_judge():
         try:
