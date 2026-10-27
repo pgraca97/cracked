@@ -1,4 +1,11 @@
 <script lang="ts">
+// The orchestrator: owns the socket listeners, the VAD lifecycle, the 10-min
+// timer and TTS playback. Everything the backend emits during a turn lands here.
+//
+// Two events update game state, on purpose:
+//   "diego_response" - Diego's text, emitted before the judge runs (fast path)
+//   "state_update"   - the judge's verdict for this turn (contradictions, confession)
+// So confession/contradiction handling exists in BOTH handlers below.
 import { defineComponent } from "vue";
 import { getSocket } from "../composables/useSocket";
 import { startVAD, pauseVAD, resumeVAD, destroyVAD, float32ToWav } from "../composables/useVAD";
@@ -207,6 +214,8 @@ export default defineComponent({
         audio.onloadedmetadata = () => {
           if (this.pendingDialogue && audio.duration > 0) {
             const charCount = this.pendingDialogue.dialogue.length;
+            // ms per char = duration / chars; 950 (not 1000) so the text
+            // finishes typing slightly BEFORE the voice stops - subtitle feel
             this.typewriterSpeed = Math.max(10, Math.floor((audio.duration * 950) / charCount));
           }
 

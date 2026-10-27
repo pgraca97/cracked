@@ -1,7 +1,22 @@
+"""
+Turn logic, state updates and scoring - no I/O of its own, main.py drives it.
+
+A turn happens in two phases so the player never waits on bookkeeping:
+  1. get_diego_response()   - the only blocking call; returns Diego's dialogue
+  2. run_judge_and_update() - fired afterwards (in parallel with TTS); the judge
+     LLM decides what actually happened this turn and mutates GameState.
+
+Why two LLMs? Diego is an adversary - if he also graded the player, he could
+"forget" contradictions (or invent them). The judge is a separate, neutral,
+low-temperature call that only trusts the transcript. Diego's own output is
+trusted for exactly one thing: the decision to confess.
+"""
 from models import GameState, DiegoResponse, JudgeResponse, ChatMessage, CaseResult, Emotion, Verdict
 import ai_client
 
 
+# Emotion is derived, never stored ad-hoc: contradiction count drives it.
+# This is the core game loop incentive - catching lies visibly rattles Diego.
 EMOTION_THRESHOLDS = {
     0: Emotion.CALM,
     1: Emotion.NERVOUS,

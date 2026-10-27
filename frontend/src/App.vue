@@ -1,4 +1,8 @@
 <script lang="ts">
+// Root component - a hand-rolled screen router (no vue-router needed for 4 screens):
+//   title -> game -> verdict -> result -> (restart) -> title
+// The socket stays connected across game -> verdict -> result because the
+// backend's game state lives on the connection's sid; only restart() disconnects.
 import { defineComponent } from "vue";
 import { getSocket } from "./composables/useSocket";
 import TitleScreen from "./components/TitleScreen.vue";

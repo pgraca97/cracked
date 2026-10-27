@@ -1,3 +1,15 @@
+"""
+Socket.IO server - the entry point (run with: uvicorn main:sio_app).
+
+Each connected client gets its own GameEngine (keyed by Socket.IO sid), so every
+browser tab is an independent game session. All game traffic flows over one
+WebSocket; FastAPI is only here as the ASGI host (no REST endpoints yet).
+
+One turn = one `player_audio` event. The handler is a pipeline:
+  transcribe -> noise filter -> [cleanup ∥ Diego] -> emit text -> [TTS ∥ judge]
+Everything after Diego's text is emitted runs in parallel because latency is
+the whole game feel - the player must see the reply as soon as it exists.
+"""
 import asyncio
 import os
 import time
@@ -84,6 +96,8 @@ async def player_audio(sid, data):
     audio_bytes = bytes(data)
     elapsed = time.time() - start_times[sid]
 
+    # Server-side timer enforcement - the frontend has its own countdown, but
+    # this is the authoritative check (a client can't extend the game)
     if elapsed > 600:
         return
 
@@ -126,7 +140,10 @@ async def player_audio(sid, data):
     if player_text != raw_text:
         await sio.emit("player_text", player_text, room=sid)
 
-    # 3. Emit text IMMEDIATELY - don't wait for judge or TTS
+    # 3. Emit text IMMEDIATELY - don't wait for judge or TTS.
+    # NOTE: the judge hasn't run yet, so contradictions/facts/confession here
+    # reflect the state BEFORE this turn. The post-judge "state_update" event
+    # below carries this turn's real evaluation - the frontend listens to both.
     await sio.emit("diego_response", {
         "dialogue": response.dialogue,
         "emotion": response.emotion.value,

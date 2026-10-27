@@ -7,7 +7,7 @@ A voice-driven interrogation game built for the Mistral AI Hackathon. You speak 
 | Component | Model | Purpose |
 |---|---|---|
 | Speech-to-text | `voxtral-mini-latest` | Transcribes the player's spoken questions |
-| Suspect (Diego) | `mistral-medium-latest` | Plays the suspect - lies, deflects, breaks under pressure |
+| Suspect (Diego) | `mistral-small-latest` default, `mistral-medium-latest` for the demo (via `DIEGO_MODEL`) | Plays the suspect - lies, deflects, breaks under pressure |
 | Judge | `mistral-medium-latest` | Evaluates each turn: extracts facts, detects contradictions, tracks relationship pressure |
 | Cleanup | `mistral-small-latest` | Fixes STT artifacts before the player sees their transcribed text |
 
@@ -61,7 +61,7 @@ Disabled by default. To enable, set `TTS_ENABLED=true` and fill in `ELEVENLABS_A
 
 1. VAD detects end of speech and sends the audio buffer to the backend over Socket.IO.
 2. Voxtral transcribes it. A cleanup pass fixes common STT artifacts.
-3. The transcript goes to `mistral-small` (Diego). His dialogue is sent to the frontend immediately.
+3. The transcript goes to Diego (Mistral chat in JSON mode). His dialogue is sent to the frontend immediately.
 4. The judge (`mistral-medium`) and TTS (ElevenLabs Flash) run in parallel - neither blocks the player from seeing Diego's response.
 5. When TTS is enabled, the typewriter speed is synced to the audio duration so text and voice finish together.
 6. The judge's evaluation updates the game state live: facts log, contradiction count, relationship pressure, emotion level.

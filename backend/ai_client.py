@@ -1,3 +1,15 @@
+"""
+All Mistral API calls live here. Four entry points, one shared client:
+
+  transcribe()          - Voxtral speech-to-text (audio bytes -> raw text)
+  chat()                - Diego, the suspect (JSON mode, retried once)
+  judge_turn()          - neutral referee: facts, contradictions, tone (temp 0.1)
+  clean_transcription() - fast STT artifact fixer, runs in parallel with chat()
+
+Every call is wrapped in asyncio.wait_for so a slow API can never freeze a
+turn. Failure policy differs by role: Diego failing aborts the turn (the game
+can't continue without him), judge/cleanup failing degrade silently.
+"""
 import asyncio
 import json
 import os
@@ -67,6 +79,14 @@ async def transcribe(audio_bytes: bytes) -> str:
     finally:
         os.unlink(tmp_path)
 
+
+# ---------------------------------------------------------------------------
+# UNUSED in the current flow - kept from the magistral (reasoning model) experiment.
+# When DIEGO_MODEL was magistral-*, responses arrived as thinking + text chunks
+# instead of clean JSON, so we needed _parse_magistral_response + these helpers.
+# We settled on mistral-small/medium with native JSON mode, which made all of
+# this unnecessary. Kept in case we revisit reasoning models for Diego.
+# ---------------------------------------------------------------------------
 
 def _extract_json_from_text(text: str) -> str:
     """Try to extract a JSON object from text that might contain markdown fences or other wrapping.
@@ -181,6 +201,8 @@ def _parse_magistral_response(content) -> tuple[str, str]:
         json_text = _extract_json_from_text(combined)
 
     return internal_thought, json_text
+
+# --------------------------- end of unused block ---------------------------
 
 
 def _clean_dialogue(text: str) -> str:

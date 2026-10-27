@@ -1,3 +1,7 @@
+"""
+Pydantic models - every LLM response is validated against these on arrival,
+so malformed JSON blows up at the boundary instead of corrupting game state.
+"""
 from pydantic import BaseModel, Field
 from enum import Enum
 from typing import Optional
