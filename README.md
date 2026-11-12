@@ -1,5 +1,7 @@
 # Cracked
 
+> Built over a weekend for the Mistral AI Hackathon (February 2026). Not in active development.
+
 A voice-driven interrogation game built for the Mistral AI Hackathon. You speak aloud to question a suspect in a museum theft case. Your goal: catch him in enough contradictions to prove he's guilty before the 10-minute timer runs out.
 
 ## Mistral APIs used
@@ -7,25 +9,24 @@ A voice-driven interrogation game built for the Mistral AI Hackathon. You speak 
 | Component | Model | Purpose |
 |---|---|---|
 | Speech-to-text | `voxtral-mini-latest` | Transcribes the player's spoken questions |
-| Suspect (Diego) | `mistral-small-latest` default, `mistral-medium-latest` for the demo (via `DIEGO_MODEL`) | Plays the suspect - lies, deflects, breaks under pressure |
+| Suspect (Diego) | `mistral-small-latest` default, `mistral-medium-latest` for the demo (via `DIEGO_MODEL`) | Plays the suspect: lies, deflects, breaks under pressure |
 | Judge | `mistral-medium-latest` | Evaluates each turn: extracts facts, detects contradictions, tracks relationship pressure |
 | Cleanup | `mistral-small-latest` | Fixes STT artifacts before the player sees their transcribed text |
 
-Diego responds in structured JSON every turn. The judge is a separate call that acts as a referee - it catches contradictions the player surfaces without letting Diego self-report them.
+Diego responds in structured JSON every turn. The judge is a separate call that acts as a referee: it catches contradictions the player surfaces without letting Diego self-report them.
 
 ## Tech stack
 
 - **Backend**: FastAPI + python-socketio, Python 3.11
 - **Frontend**: Vue 3 + TypeScript + Vite
-- **VAD**: `@ricky0123/vad-web` - detects when the player stops speaking
+- **VAD**: `@ricky0123/vad-web`, detects when the player stops speaking
 - **TTS**: ElevenLabs (optional, disabled by default)
 
-## Setup
+## How to run
 
 **Requirements**: Python 3.11+, Node.js, pnpm
 
 ```bash
-# Clone and enter the repo
 git clone https://github.com/pgraca97/cracked.git
 cd cracked
 ```
@@ -36,10 +37,12 @@ cd cracked
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
 cp .env.example .env
-# Fill in MISTRAL_API_KEY in .env
+```
 
+Fill in `MISTRAL_API_KEY` in `backend/.env`, then start the server:
+
+```bash
 uvicorn main:sio_app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -62,7 +65,7 @@ Disabled by default. To enable, set `TTS_ENABLED=true` and fill in `ELEVENLABS_A
 1. VAD detects end of speech and sends the audio buffer to the backend over Socket.IO.
 2. Voxtral transcribes it. A cleanup pass fixes common STT artifacts.
 3. The transcript goes to Diego (Mistral chat in JSON mode). His dialogue is sent to the frontend immediately.
-4. The judge (`mistral-medium`) and TTS (ElevenLabs Flash) run in parallel - neither blocks the player from seeing Diego's response.
+4. The judge (`mistral-medium`) and TTS (ElevenLabs Flash) run in parallel, so neither blocks the player from seeing Diego's response.
 5. When TTS is enabled, the typewriter speed is synced to the audio duration so text and voice finish together.
 6. The judge's evaluation updates the game state live: facts log, contradiction count, relationship pressure, emotion level.
 7. Emotion escalates from `calm` → `nervous` → `defensive` → `breaking` as contradictions accumulate.
