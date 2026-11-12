@@ -4,6 +4,8 @@
 
 A voice-driven interrogation game built for the Mistral AI Hackathon. You speak aloud to question a suspect in a museum theft case. Your goal: catch him in enough contradictions to prove he's guilty before the 10-minute timer runs out.
 
+[![Two-minute demo: questioning Diego by voice until he contradicts himself](https://img.youtube.com/vi/pZLFKCyMD3Q/maxresdefault.jpg)](https://www.youtube.com/watch?v=pZLFKCyMD3Q)
+
 ## Mistral APIs used
 
 | Component | Model | Purpose |
